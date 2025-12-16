@@ -1,0 +1,1235 @@
+#Copyright (C) UCSF/Jie Jane Chen/Julian Hong 2025
+#GNU General Public License v2.0
+#Please see LICENSE and README.md
+
+# Load libraries
+```{r}
+library(xml2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(data.table)
+library(lattice)
+library(sqldf)
+library(rmarkdown)
+library(survival)
+library(glmnet)
+library(survminer)
+library(casebase) #cumulative incidence
+library(broom)
+library(marginaleffects)
+library(vcov)
+```
+
+# Load data
+```{r}
+setwd("/Users/chenj/Downloads/New CTCAE outputs_9.1.23")
+Dx_filtered <- read.csv("./dx_ctcaelong.csv", header = TRUE)
+RT_1st_filtered <- read.csv("./RT1st_ctcaelong.csv", header = TRUE)
+RT_2nd_filtered <- read.csv("./RT2nd_ctcaelong.csv", header = TRUE)
+
+ctcae_dx <- read.csv("./dx_ctcaewide_mapped.csv", header = TRUE)
+ctcae_RT_1st <- read.csv("./RT1st_ctcaewide_mapped.csv", header = TRUE)
+ctcae_RT_2nd <- read.csv("./RT2nd_ctcaewide_mapped.csv", header = TRUE)
+
+#This code is for generating the files, don't need to run again after re-upload below
+RTDemo_1st <- read.csv("./All_RTDemo1st_dxRT.csv", header = TRUE)
+RTDemo_2nd <- read.csv("./All_RTDemo2nd_dxRT.csv", header = TRUE)
+```
+
+###Group the insurance and delete duplicates, so there's only one row per patient
+```{r}
+#Insurance grouped
+RTDemo_1st$Insur_grouped <- recode(RTDemo_1st$insurance, 
+                                   'Aetna' = 'Private',
+                                   'Blue Cross' = "Private",
+                                   "Blue Shield" = "Private",
+  "Capitation" = "Private",
+  "Cigna" = "Private",
+  "Commercial" = "Private",
+  "Covered California" = "Private",
+  "HealthNet" = "Private",
+  "Institutional" = "Private",
+  "Kaiser" = "Private",
+  "United Health Care" = "Private",
+  "Capitation Senior" = "Private",
+  "Other Government" = "Other",
+  "Other" = "Other",
+  "CCS/GHPP" = "Other",
+  "Charity" = "Uninsured or selfpay",
+  "Self-Pay" = "Uninsured or selfpay",
+  "Medicare" = "Medicare",
+  "Medicare Advantage" = "Medicare",
+  "Medicare Advantage HMO/Senior" = "Medicare",
+  "Alameda Alliance Covered California Managed Medi-Cal" = "Medicaid",
+  "Alameda Alliance Managed Medi-Cal" = "Medicaid",
+  "Covered California Medi-Cal" = "Medicaid",
+  "Denti-Cal" = "Medicaid",
+  "MEDICAID/MIA/CMSP" = "Medicaid",
+  "Medi-Cal Managed Care" = "Medicaid",
+  "Medi-Cal Standard" = "Medicaid",
+  "Partnership Covered California Managed Medi-Cal" = "Medicaid",
+  "Partnership Managed Medi-Cal" = "Medicaid",
+  "Medi-Cal Pending" = "Medicaid",
+  "*Unspecified" = "Unspecified",
+  "Research" = "Research or Workerscomp",
+  "Worker's Comp" = "Research or Workerscomp")
+
+RTDemo_1st <- subset(RTDemo_1st, select = -insurance) #This REMOVES the insurance category, so above code groupings will become obsolete
+RTDemo_1st <- distinct(RTDemo_1st) #Drop duplicate rows
+
+table(RTDemo_1st$Insur_grouped)
+RTDemo_1st %>% 
+  group_by(Insur_grouped) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_1st) )
+```
+
+###Group the insurance and delete duplicates, so there's only one row per patient - repeating this for RTDemo_2nd
+```{r}
+#Insurance grouped
+RTDemo_2nd$Insur_grouped <- recode(RTDemo_2nd$insurance, 
+                                   'Aetna' = 'Private',
+                                   'Blue Cross' = "Private",
+                                   "Blue Shield" = "Private",
+  "Capitation" = "Private",
+  "Cigna" = "Private",
+  "Commercial" = "Private",
+  "Covered California" = "Private",
+  "HealthNet" = "Private",
+  "Institutional" = "Private",
+  "Kaiser" = "Private",
+  "United Health Care" = "Private",
+  "Capitation Senior" = "Private",
+  "Other Government" = "Other",
+  "Other" = "Other",
+  "CCS/GHPP" = "Other",
+  "Charity" = "Uninsured or selfpay",
+  "Self-Pay" = "Uninsured or selfpay",
+  "Medicare" = "Medicare",
+  "Medicare Advantage" = "Medicare",
+  "Medicare Advantage HMO/Senior" = "Medicare",
+  "Alameda Alliance Covered California Managed Medi-Cal" = "Medicaid",
+  "Alameda Alliance Managed Medi-Cal" = "Medicaid",
+  "Covered California Medi-Cal" = "Medicaid",
+  "Denti-Cal" = "Medicaid",
+  "MEDICAID/MIA/CMSP" = "Medicaid",
+  "Medi-Cal Managed Care" = "Medicaid",
+  "Medi-Cal Standard" = "Medicaid",
+  "Partnership Covered California Managed Medi-Cal" = "Medicaid",
+  "Partnership Managed Medi-Cal" = "Medicaid",
+  "Medi-Cal Pending" = "Medicaid",
+  "*Unspecified" = "Unspecified",
+  "Research" = "Research or Workerscomp",
+  "Worker's Comp" = "Research or Workerscomp")
+
+RTDemo_2nd <- subset(RTDemo_2nd, select = -insurance) #This REMOVES the insurance category, so above code groupings will become obsolete
+RTDemo_2nd <- distinct(RTDemo_2nd) #Drop duplicate rows
+
+table(RTDemo_2nd$Insur_grouped)
+RTDemo_2nd %>% 
+  group_by(Insur_grouped) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_2nd) )
+```
+
+#SAVING RTDemo_1st and RTDemo_2nd
+```{r}
+write.csv(RTDemo_1st, "RTDemo_1st.csv", row.names = TRUE)
+write.csv(RTDemo_2nd, "RTDemo_2nd.csv", row.names = TRUE)
+```
+
+##Reupload of RTDemo_1st and RTDemo_2nd after manual removal for dual insurance entries
+##Medicare and self-pay/uninsured --> Medicare
+##Private and Medicare --> Medicare
+##Private and Medicaid --> Medicaid
+##Medicare and Medicaid --> Medicaid
+##Medicare and Research/Workers Comp --> Medicare
+##Any insurance and self-pay/uninsured --> Insured (pts may have acquired insurance right before treatment and/or it wasn't entered until before treatment)
+##Other or self-pay/uninsured --> Other
+```{r}
+RTDemo_1st <- read.csv("./RTDemo_1st.csv", header = TRUE)
+RTDemo_2nd <- read.csv("./RTDemo_2nd.csv", header = TRUE)
+```
+
+### Create table of patient IDs and note IDs
+#Select ptkey and notekey from RT_filteredconcepts_1stcourse_5.16.22
+#Select pain from CTCAEwide_all (have to rename because R doesn't like numbers): Pain = 10033371
+#Join RT_filteredconcepts table (only ptkey and notekey columns) to CTCAEwide_mapped (only pain column)
+#Check to make sure the column numbers are corresponding to the right # for pain
+#Join the above table to RTDemo_1st
+```{r}
+RT_short <- RT_1st_filtered %>% select(ptkey, NOTE_ID)
+colnames(ctcae_RT_1st)[33] <- "Pain"
+ctcae_RT_1st_pain <- ctcae_RT_1st %>% select("NOTE_ID", "Pain")
+
+RT_1st_pain <- merge(x = RT_short, y = ctcae_RT_1st_pain, by.x = "NOTE_ID", by.y = "NOTE_ID")
+RT_1st_pain
+
+RT_1st_pain <- RT_1st_pain %>% 
+  select(ptkey, Pain) %>%
+  group_by(ptkey) %>%
+  summarize(Pain = max(Pain))
+RT_1st_pain <-unique(RT_1st_pain)
+RT_1st_pain
+
+RT_short_2nd <- RT_2nd_filtered %>% select(ptkey, NOTE_ID)
+colnames(ctcae_RT_2nd)[31] <- "Pain"
+ctcae_RT_2nd_pain <- ctcae_RT_2nd %>% select("NOTE_ID", "Pain")
+
+RT_2nd_pain <- merge(x = RT_short_2nd, y = ctcae_RT_2nd_pain, by.x = "NOTE_ID", by.y = "NOTE_ID")
+RT_2nd_pain
+
+RT_2nd_pain <- RT_2nd_pain %>% 
+  select(ptkey, Pain) %>%
+  group_by(ptkey) %>%
+  summarize(Pain = max(Pain))
+RT_2nd_pain <-unique(RT_2nd_pain)
+RT_2nd_pain
+```
+
+##Show the tables
+```{r}
+View(RT_1st_pain)
+View(RT_2nd_pain)
+```
+
+#JOINING Symptoms before 1st RT with Demographics
+#Join the tables: merge(x=___, y=___, by = 'ptkey')
+##Join Pain table with demographics
+```{r}
+RTDemo_pain <- left_join(x = RTDemo_1st, y = RT_1st_pain, by = "ptkey")
+RTDemo_pain <- distinct(RTDemo_pain, .keep_all = TRUE) # Drop duplicate rows based on all columns
+```
+
+#JOINING Symptoms before 2nd and subsequent RT with Demographics
+```{r}
+RTDemo_pain_2nd <- left_join(x = RTDemo_2nd, y = RT_2nd_pain, by = "ptkey")
+RTDemo_pain_2nd <- distinct(RTDemo_pain_2nd, .keep_all = TRUE) #Drop duplicate rows
+```
+
+##Show the tables
+```{r}
+View(RTDemo_pain)
+View(RTDemo_pain_2nd)
+```
+
+#NUMBER of RT courses for 1,061 patients
+```{r}
+RTDemo_pain_1stRTcourse <- merge(x = RT_1st_pain, y = RTDemo_pain, by = "ptkey")
+RTDemo_pain_1stRTcourse <- distinct(RTDemo_pain_1stRTcourse)
+
+table(RTDemo_pain_1stRTcourse$RTcourse)
+RTDemo_pain_1stRTcourse %>% 
+  group_by(RTcourse) %>% 
+  summarise(RTcourse = max(RTcourse), num = n_distinct(ptkey))
+
+RTDemo_pain_2ndRTcourses <- merge(x = RT_2nd_pain, y = RTDemo_pain_2nd, by = "ptkey")
+RTDemo_pain_2ndRTcourses <- distinct(RTDemo_pain_2ndRTcourses)
+
+table(RTDemo_pain_2ndRTcourses$RTcourse)
+RTDemo_pain_2ndRTcourses %>% 
+  group_by(RTcourse) %>% 
+  summarise(RTcourse = max(RTcourse), num = n_distinct(ptkey))
+```
+
+#Table 1 for 1,061 pts (using RTDemo_pain) - Count frequencies using table() and calculate % using dplyr
+```{r}
+#Age at RT
+median(RTDemo_pain$ageatRT)
+range(RTDemo_pain$ageatRT)
+quantile(RTDemo_pain$ageatRT)
+
+#Sex
+table(RTDemo_pain$sex)
+RTDemo_pain %>% 
+  group_by(sex) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Preferred Language
+table(RTDemo_pain$preferredlanguage)
+RTDemo_pain %>% 
+  group_by(preferredlanguage) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Language grouped by English vs non-English vs unknown
+RTDemo_pain$Lang_grouped <- recode(RTDemo_pain$preferredlanguage,
+  "Amharic" = "Non-English",
+  "Russian" = "Non-English",
+  "Korean" = "Non-English",
+  "Spanish" = "Non-English",
+  "Chinese - Cantonese" = "Non-English",
+  "Chinese - Mandarin" = "Non-English",
+  "Chinese - Toishanese" = "Non-English",
+  "Chinese (Other)" = "Non-English",
+  "Burmese" = "Non-English",
+  "Laotian" = "Non-English",
+  "Vietnamese" = "Non-English",
+  "Tagalog" = "Non-English",
+  "Arabic" = "Non-English",
+  "Arabic - Yemeni" = "Non-English",
+  "Gujarati" = "Non-English",
+  "Hebrew" = "Non-English",
+  "Farsi" = "Non-English",
+  "French" = "Non-English",
+  "Sign Language" = "Non-English",
+  "Thai" = "Non-English",
+  "Portuguese - Brazilian" = "Non-English",
+  "Punjabi" = "Non-English")
+
+table(RTDemo_pain$Lang_grouped)
+RTDemo_pain %>% 
+  group_by(Lang_grouped) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Race (Race_formatted)
+table(RTDemo_pain$Race_formatted)
+RTDemo_pain %>% 
+  group_by(Race_formatted) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Race (Race_reformatted) = Race_formatted grouped into categories
+RTDemo_pain$Race_reformatted <- recode(RTDemo_pain$Race_formatted,
+  "Native American or Alaska Native" = "Other",
+  "Black or African American" = "Black",
+  "Native Hawaiian or Other Pacific Islander" = "Other",
+  "Other Pacific Islander" = "Other",
+  "Asian" = "Asian",
+  "Other" = "Other",
+  "White or Caucasian" = "White",
+  "Declined" = "Unknown",
+  "Unknown" = "Unknown",
+  "*Unspecified" = "Unknown")
+table(RTDemo_pain$Race_reformatted)
+RTDemo_pain %>% 
+  group_by(Race_reformatted) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Race_grouped
+RTDemo_pain$Race_grouped <- recode(RTDemo_pain$Race_formatted,
+  "Native American or Alaska Native" = "Non-White",
+  "Black or African American" = "Non-White",
+  "Native Hawaiian or Other Pacific Islander" = "Non-White",
+  "Other Pacific Islander" = "Non-White",
+  "Asian" = "Non-White",
+  "Other" = "Non-White",
+  "White or Caucasian" = "White",
+  "Declined" = "Unknown",
+  "Unknown" = "Unknown",
+  "*Unspecified" = "Unknown", 
+  "Unknown/Declined" = "Unknown")
+table(RTDemo_pain$Race_grouped)
+RTDemo_pain %>% 
+  group_by(Race_grouped) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Ethnicity - grouped by #Hispanic or Latino #Not Hispanic or Latino #Unknown/Declined
+RTDemo_pain$Ethn_grouped <- recode(RTDemo_pain$ethnicity,
+                                   "Hipsanic or Latino" = "Hispanic or Latino",
+                                   "Not Hispanic or Latino" = "Not Hispanic or Latino",
+                                   "Declined" = "Unknown/Declined",
+                                   "Unknown" = "Unknown/Declined",
+                                   "Unknown/Declined" = "Unknown/Declined")
+table(RTDemo_pain$Ethn_grouped)
+RTDemo_pain %>%
+  group_by(Ethn_grouped) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Insurance_grouped (only 1 row per patient)
+table(RTDemo_pain$Insur_grouped)
+RTDemo_pain %>% 
+  group_by(Insur_grouped) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Marital Status
+table(RTDemo_pain$maritalstatus)
+RTDemo_pain %>% 
+  group_by(maritalstatus) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+#Married #Significant Other #Registered Domestic Partner #RDP-Dissolved #RDP-Widowed
+#Single #Divorced #Widowed #Legally Separated
+#Unknown/Declined
+
+#Marital status grouped
+RTDemo_pain$marital_grouped <- recode(RTDemo_pain$maritalstatus,
+                                  "Married" = "Partnered",
+                                  "Significant Other" = "Partnered",
+                                  "Registered Domestic Partner" = "Partnered",
+                                  "RDP-Dissolved" = "Single",
+                                  "RDP-Widowed" = "Single",
+                                  "Single" = "Single",
+                                  "Divorced" = "Single",
+                                  "Widowed" = "Single",
+                                  "Legally Separated" = "Single")
+table(RTDemo_pain$marital_grouped)
+RTDemo_pain %>% 
+  group_by(marital_grouped) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Religion grouped
+RTDemo_pain$relig_grouped <- recode(RTDemo_pain$religion,
+                                  "Jewish" = "Spiritual or religious",
+                                  "Baptist" = "Spiritual or religious",
+                                  "Christian" = "Spiritual or religious",
+                                  "Catholic" = "Spiritual or religious",
+                                  "CH of Christ" = "Spiritual or religious",
+                                  "Evangelical" = "Spiritual or religious",
+                                  "Greek Orthodox" = "Spiritual or religious",
+                                  "Russian Orthodox" = "Spiritual or religious",
+                                  "Presbyterian" = "Spiritual or religious",
+                                  "Protestant" = "Spiritual or religious",
+                                  "Pentecostal" = "Spiritual or religious",
+                                  "Humanist" = "Spiritual or religious",
+                                  "Episcopalian" = "Spiritual or religious",
+                                  "Non-Denominational" = "Spiritual or religious",
+                                  "Lutheran" = "Spiritual or religious",
+                                  "Apostolic" = "Spiritual or religious",
+                                  "Methodist" = "Spiritual or religious",
+                                  "Buddhist" = "Spiritual or religious",
+                                  "Muslim" = "Spiritual or religious",
+                                  "Hindu" = "Spiritual or religious",
+                                  "Jain" = "Spiritual or religious",
+                                  "Sikh" = "Spiritual or religious",
+                                  "Seventh Day Adventist" = "Spiritual or religious",
+                                  "Unitarian Universalist" = "Spiritual or religious",
+                                  "Mormon (Church of Latter-day Saints)" = "Spiritual or religious",
+                                  "Jehovah's Witness" = "Spiritual or religious",
+                                  "Spiritual & Not Religious" = "Spiritual or religious",
+                                  "*Unspecified" = "Unknown",
+                                  "Other" = "Spiritual or religious",
+                                  "None" = "Not spiritual or religious",
+                                  "Atheist" = "Not spiritual or religious",
+                                  "No Faith" = "Not spiritual or religious")
+
+table(RTDemo_pain$relig_grouped)
+RTDemo_pain %>% 
+  group_by(relig_grouped) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Cancer groupings
+table(RTDemo_pain$Bladder.and.ureter)
+RTDemo_pain %>% 
+  group_by(Bladder.and.ureter) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Bone.soft.tissue.and.sarcoma)
+RTDemo_pain %>% 
+  group_by(Bone.soft.tissue.and.sarcoma) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Breast)
+RTDemo_pain %>% 
+  group_by(Breast) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$CNS)
+RTDemo_pain %>% 
+  group_by(CNS) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Colorectal)
+RTDemo_pain %>% 
+  group_by(Colorectal) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$GI.other)
+RTDemo_pain %>% 
+  group_by(GI.other) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Gynecologic)
+RTDemo_pain %>% 
+  group_by(Gynecologic) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Head.and.neck)
+RTDemo_pain %>% 
+  group_by(Head.and.neck) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Hematologic)
+RTDemo_pain %>% 
+  group_by(Hematologic) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Kidney.and.renal.pelvis)
+RTDemo_pain %>% 
+  group_by(Kidney.and.renal.pelvis) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Liver.and.bile.duct)
+RTDemo_pain %>% 
+  group_by(Liver.and.bile.duct) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Lung)
+RTDemo_pain %>% 
+  group_by(Lung) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Melanoma)
+RTDemo_pain %>% 
+  group_by(Melanoma) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Metastatic)
+RTDemo_pain %>% 
+  group_by(Metastatic) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Other)
+RTDemo_pain %>% 
+  group_by(Other) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Pancreatic)
+RTDemo_pain %>% 
+  group_by(Pancreatic) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Prostate)
+RTDemo_pain %>% 
+  group_by(Prostate) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+table(RTDemo_pain$Skin.other)
+RTDemo_pain %>% 
+  group_by(Skin.other) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+
+#Histology grouped by prostate vs breast vs lung vs sarcoma vs hematologic vs other
+RTDemo_pain <- RTDemo_pain %>%
+  mutate(Histology = case_when(
+    Bone.soft.tissue.and.sarcoma == 1 ~ "Sarcoma",
+    Breast == 1 ~ "Breast",
+    Lung == 1 ~ "Lung",
+    Prostate == 1 ~ "Prostate",
+    Hematologic == 1 ~ "Hematologic",
+    TRUE ~ "Other"
+  ))
+RTDemo_pain <- distinct(RTDemo_pain) #Drop duplicate rows
+View(RTDemo_pain)
+
+table(RTDemo_pain$Histology)
+RTDemo_pain %>% 
+  group_by(Histology) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+```
+
+#GROUPINGS for RTDemo_pain_2nd
+```{r}
+#Language grouped by English vs non-English vs unknown
+RTDemo_pain_2nd$Lang_grouped <- recode(RTDemo_pain_2nd$preferredlanguage,
+  "Amharic" = "Non-English",
+  "Russian" = "Non-English",
+  "Korean" = "Non-English",
+  "Spanish" = "Non-English",
+  "Chinese - Cantonese" = "Non-English",
+  "Chinese - Mandarin" = "Non-English",
+  "Chinese - Toishanese" = "Non-English",
+  "Chinese (Other)" = "Non-English",
+  "Burmese" = "Non-English",
+  "Laotian" = "Non-English",
+  "Vietnamese" = "Non-English",
+  "Tagalog" = "Non-English",
+  "Arabic" = "Non-English",
+  "Arabic - Yemeni" = "Non-English",
+  "Gujarati" = "Non-English",
+  "Hebrew" = "Non-English",
+  "Farsi" = "Non-English",
+  "French" = "Non-English",
+  "Sign Language" = "Non-English",
+  "Thai" = "Non-English",
+  "Portuguese - Brazilian" = "Non-English",
+  "Punjabi" = "Non-English")
+
+#Race (Race_reformatted) = Race_formatted grouped into categories
+RTDemo_pain_2nd$Race_reformatted <- recode(RTDemo_pain_2nd$Race_formatted,
+  "Native American or Alaska Native" = "Other",
+  "Black or African American" = "Black",
+  "Native Hawaiian or Other Pacific Islander" = "Other",
+  "Other Pacific Islander" = "Other",
+  "Asian" = "Asian",
+  "Other" = "Other",
+  "White or Caucasian" = "White",
+  "Declined" = "Unknown",
+  "Unknown" = "Unknown",
+  "*Unspecified" = "Unknown")
+table(RTDemo_pain_2nd$Race_reformatted)
+RTDemo_pain_2nd %>% 
+  group_by(Race_reformatted) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain_2nd) )
+
+RTDemo_pain_2nd$Race_grouped <- recode(RTDemo_pain_2nd$Race_formatted,
+  "Native American or Alaska Native" = "Non-White",
+  "Black or African American" = "Non-White",
+  "Native Hawaiian or Other Pacific Islander" = "Non-White",
+  "Other Pacific Islander" = "Non-White",
+  "Asian" = "Non-White",
+  "Other" = "Non-White",
+  "White or Caucasian" = "White",
+  "Declined" = "Unknown",
+  "Unknown" = "Unknown",
+  "*Unspecified" = "Unknown")
+
+RTDemo_pain_2nd$Ethn_grouped <- recode(RTDemo_pain_2nd$ethnicity,
+                                   "Hipsanic or Latino" = "Hispanic or Latino",
+                                   "Not Hispanic or Latino" = "Not Hispanic or Latino",
+                                   "Declined" = "Unknown/Declined",
+                                   "Unknown" = "Unknown/Declined",
+                                   "Unknown/Declined" = "Unknown/Declined")
+
+RTDemo_pain_2nd$marital_grouped <- recode(RTDemo_pain_2nd$maritalstatus,
+                                  "Married" = "Partnered",
+                                  "Significant Other" = "Partnered",
+                                  "Registered Domestic Partner" = "Partnered",
+                                  "RDP-Dissolved" = "Single",
+                                  "RDP-Widowed" = "Single",
+                                  "Single" = "Single",
+                                  "Divorced" = "Single",
+                                  "Widowed" = "Single",
+                                  "Legally Separated" = "Single")
+
+RTDemo_pain_2nd$relig_grouped <- recode(RTDemo_pain_2nd$religion,
+                                  "Jewish" = "Spiritual or religious",
+                                  "Baptist" = "Spiritual or religious",
+                                  "Christian" = "Spiritual or religious",
+                                  "Catholic" = "Spiritual or religious",
+                                  "CH of Christ" = "Spiritual or religious",
+                                  "Evangelical" = "Spiritual or religious",
+                                  "Greek Orthodox" = "Spiritual or religious",
+                                  "Russian Orthodox" = "Spiritual or religious",
+                                  "Presbyterian" = "Spiritual or religious",
+                                  "Protestant" = "Spiritual or religious",
+                                  "Pentecostal" = "Spiritual or religious",
+                                  "Humanist" = "Spiritual or religious",
+                                  "Episcopalian" = "Spiritual or religious",
+                                  "Non-Denominational" = "Spiritual or religious",
+                                  "Lutheran" = "Spiritual or religious",
+                                  "Apostolic" = "Spiritual or religious",
+                                  "Methodist" = "Spiritual or religious",
+                                  "Buddhist" = "Spiritual or religious",
+                                  "Muslim" = "Spiritual or religious",
+                                  "Hindu" = "Spiritual or religious",
+                                  "Jain" = "Spiritual or religious",
+                                  "Sikh" = "Spiritual or religious",
+                                  "Seventh Day Adventist" = "Spiritual or religious",
+                                  "Unitarian Universalist" = "Spiritual or religious",
+                                  "Mormon (Church of Latter-day Saints)" = "Spiritual or religious",
+                                  "Jehovah's Witness" = "Spiritual or religious",
+                                  "Spiritual & Not Religious" = "Spiritual or religious",
+                                  "*Unspecified" = "Unknown",
+                                  "Other" = "Spiritual or religious",
+                                  "None" = "Not spiritual or religious",
+                                  "Atheist" = "Not spiritual or religious",
+                                  "No Faith" = "Not spiritual or religious")
+
+#Histology grouped by prostate vs breast vs lung vs sarcoma vs hematologic vs other
+RTDemo_pain_2nd <- RTDemo_pain_2nd %>%
+  mutate(Histology = case_when(
+    Bone.soft.tissue.and.sarcoma == 1 ~ "Sarcoma",
+    Breast == 1 ~ "Breast",
+    Lung == 1 ~ "Lung",
+    Prostate == 1 ~ "Prostate",
+    Hematologic == 1 ~ "Hematologic",
+    TRUE ~ "Other"
+  ))
+RTDemo_pain_2nd <- distinct(RTDemo_pain_2nd) #Drop duplicate rows
+```
+
+#Verified the column positions (not the same as for RT_1st_short)
+#Pain = 10033371
+```{r}
+dx_short <- Dx_filtered %>% select(ptkey, NOTE_ID)
+colnames(ctcae_dx)[28] <- "Pain"
+ctcae_dx_pain <- ctcae_dx %>% select("NOTE_ID", "Pain")
+
+dx_pain <- merge(x = dx_short, y = ctcae_dx_pain, by.x = "NOTE_ID", by.y = "NOTE_ID")
+dx_pain
+
+dx_pain <- dx_pain %>% 
+  select(ptkey, Pain) %>%
+  group_by(ptkey) %>%
+  summarize(Pain = max(Pain))
+dx_pain <-unique(dx_pain)
+dx_pain
+
+####################JOINING Symptoms before dx with Demographics
+
+#Join the tables: merge(x=___, y=___, by = 'ptkey')
+##Join Pain and Pathfx tables with demographics
+dxDemo_pain <- left_join(x = RTDemo_1st, y = dx_pain, by = "ptkey")
+dxDemo_pain <- distinct(dxDemo_pain, .keep_all = TRUE) #Drop duplicate rows
+
+#################### CREATING GROUPINGS for Dx - keeping the unknowns here
+dxDemo_pain$Lang_grouped <- recode(dxDemo_pain$preferredlanguage,
+                                           "Amharic" = "Non-English",
+                                           "Russian" = "Non-English",
+                                           "Korean" = "Non-English",
+                                           "Spanish" = "Non-English",
+                                           "Chinese - Cantonese" = "Non-English",
+                                           "Chinese - Mandarin" = "Non-English",
+                                           "Chinese - Toishanese" = "Non-English",
+                                           "Chinese (Other)" = "Non-English",
+                                           "Burmese" = "Non-English",
+                                           "Laotian" = "Non-English",
+                                           "Vietnamese" = "Non-English",
+                                           "Tagalog" = "Non-English",
+                                           "Arabic" = "Non-English",
+                                           "Arabic - Yemeni" = "Non-English",
+                                           "Gujarati" = "Non-English",
+                                           "Hebrew" = "Non-English",
+                                           "Farsi" = "Non-English",
+                                           "French" = "Non-English",
+                                           "Sign Language" = "Non-English",
+                                           "Thai" = "Non-English",
+                                           "Portuguese - Brazilian" = "Non-English",
+                                           "Punjabi" = "Non-English")
+
+#Race (Race_reformatted) = Race_formatted grouped into categories
+dxDemo_pain$Race_reformatted <- recode(dxDemo_pain$Race_formatted,
+  "Native American or Alaska Native" = "Other",
+  "Black or African American" = "Black",
+  "Native Hawaiian or Other Pacific Islander" = "Other",
+  "Other Pacific Islander" = "Other",
+  "Asian" = "Asian",
+  "Other" = "Other",
+  "White or Caucasian" = "White",
+  "Declined" = "Unknown",
+  "Unknown" = "Unknown",
+  "*Unspecified" = "Unknown")
+table(dxDemo_pain$Race_reformatted)
+dxDemo_pain %>% 
+  group_by(Race_reformatted) %>% 
+  summarise(percent = 100 * n() / nrow(dxDemo_pain) )
+
+dxDemo_pain$Race_grouped <- recode(dxDemo_pain$Race_formatted,
+                                           "Native American or Alaska Native" = "Non-White",
+                                           "Black or African American" = "Non-White",
+                                           "Native Hawaiian or Other Pacific Islander" = "Non-White",
+                                           "Other Pacific Islander" = "Non-White",
+                                           "Asian" = "Non-White",
+                                           "Other" = "Non-White",
+                                           "White or Caucasian" = "White",
+                                           "Declined" = "Unknown",
+                                           "Unknown" = "Unknown",
+                                           "*Unspecified" = "Unknown")
+                                           
+dxDemo_pain$Ethn_grouped <- recode(dxDemo_pain$ethnicity,
+                                   "Hipsanic or Latino" = "Hispanic or Latino",
+                                   "Not Hispanic or Latino" = "Not Hispanic or Latino",
+                                   "Declined" = "Unknown/Declined",
+                                   "Unknown" = "Unknown/Declined",
+                                   "Unknown/Declined" = "Unknown/Declined")
+
+dxDemo_pain$marital_grouped <- recode(dxDemo_pain$maritalstatus,
+                                  "Married" = "Partnered",
+                                  "Significant Other" = "Partnered",
+                                  "Registered Domestic Partner" = "Partnered",
+                                  "RDP-Dissolved" = "Single",
+                                  "RDP-Widowed" = "Single",
+                                  "Single" = "Single",
+                                  "Divorced" = "Single",
+                                  "Widowed" = "Single",
+                                  "Legally Separated" = "Single")
+
+dxDemo_pain$relig_grouped <- recode(dxDemo_pain$religion,
+                                  "Jewish" = "Spiritual or religious",
+                                  "Baptist" = "Spiritual or religious",
+                                  "Christian" = "Spiritual or religious",
+                                  "Catholic" = "Spiritual or religious",
+                                  "CH of Christ" = "Spiritual or religious",
+                                  "Evangelical" = "Spiritual or religious",
+                                  "Greek Orthodox" = "Spiritual or religious",
+                                  "Russian Orthodox" = "Spiritual or religious",
+                                  "Presbyterian" = "Spiritual or religious",
+                                  "Protestant" = "Spiritual or religious",
+                                  "Pentecostal" = "Spiritual or religious",
+                                  "Humanist" = "Spiritual or religious",
+                                  "Episcopalian" = "Spiritual or religious",
+                                  "Non-Denominational" = "Spiritual or religious",
+                                  "Lutheran" = "Spiritual or religious",
+                                  "Apostolic" = "Spiritual or religious",
+                                  "Methodist" = "Spiritual or religious",
+                                  "Buddhist" = "Spiritual or religious",
+                                  "Muslim" = "Spiritual or religious",
+                                  "Hindu" = "Spiritual or religious",
+                                  "Jain" = "Spiritual or religious",
+                                  "Sikh" = "Spiritual or religious",
+                                  "Seventh Day Adventist" = "Spiritual or religious",
+                                  "Unitarian Universalist" = "Spiritual or religious",
+                                  "Mormon (Church of Latter-day Saints)" = "Spiritual or religious",
+                                  "Jehovah's Witness" = "Spiritual or religious",
+                                  "Spiritual & Not Religious" = "Spiritual or religious",
+                                  "*Unspecified" = "Unknown",
+                                  "Other" = "Spiritual or religious",
+                                  "None" = "Not spiritual or religious",
+                                  "Atheist" = "Not spiritual or religious",
+                                  "No Faith" = "Not spiritual or religious")
+
+#Histology grouped by prostate vs breast vs lung vs sarcoma vs hematologic vs other
+dxDemo_pain <- dxDemo_pain %>%
+  mutate(Histology = case_when(
+    Bone.soft.tissue.and.sarcoma == 1 ~ "Sarcoma",
+    Breast == 1 ~ "Breast",
+    Lung == 1 ~ "Lung",
+    Prostate == 1 ~ "Prostate",
+    Hematologic == 1 ~ "Hematologic",
+    TRUE ~ "Other"
+  ))
+dxDemo_pain <- distinct(dxDemo_pain) #Drop duplicate rows
+```
+
+#Show dx table
+```{r}
+View(dxDemo_pain)
+```
+
+#Recode data for pain: all "0", "-1", and "NA" (missing data) recoded to "0"
+```{r}
+dxDemo_pain$Pain <- ifelse(dxDemo_pain$Pain %in% c(0, -1, NA), 0, 1)
+RTDemo_pain$Pain <- ifelse(RTDemo_pain$Pain %in% c(0, -1, NA), 0, 1)
+RTDemo_pain_2nd$Pain <- ifelse(RTDemo_pain_2nd$Pain %in% c(0, -1, NA), 0, 1)
+```
+
+#Median number of notes per patient in 30 days before 1st RT
+```{r}
+##COUNT DISTINCT notekey per patient
+ctcae_RT_notekey <- ctcae_RT_1st %>% select("NOTE_ID")
+
+RT_1st_notekey <- merge(x = RT_short, y = ctcae_RT_notekey, by.x = "NOTE_ID", by.y = "NOTE_ID")
+RT_1st_notekey <- RT_1st_notekey %>%
+  group_by(ptkey) %>%
+  summarize(ptkey = first(ptkey), note_num = n_distinct(NOTE_ID))
+RT_1st_notekey
+
+summary(RT_1st_notekey$note_num)
+
+#Merged demo and number of notes per patient
+#Example for finding summary of different columns by a certain column: by(jdbaba[c("Surface","Bottom", "diff")], jdbaba$id, summary)
+#Example: res <- wilcox.test(weight ~ group, data = my_data, exact = FALSE)
+RT_1st_notekey_demo <- merge(x = RTDemo_pain, y = RT_1st_notekey, by.x = "ptkey", by.y = "ptkey")
+RT_1st_notekey_demo_pathfx <- merge(x = RTDemo_pathfx, y = RT_1st_notekey, by.x = "ptkey", by.y = "ptkey")
+
+#Age
+#Convert to numeric: data$column_name <- as.numeric(data$column_name)
+RT_1st_notekey_demo$ageatRT < as.numeric(RT_1st_notekey_demo$ageatRT)
+RT_1st_notekey_demo$age_grouped <- cut(RT_1st_notekey_demo$ageatRT, breaks=c(0,65,120))
+RT_1st_notekey_demo$age_grouped
+by(RT_1st_notekey_demo[c("note_num")], RT_1st_notekey_demo$age_grouped, summary)
+wilcoxon_note_num_age <- wilcox.test(note_num ~ age_grouped, data = RT_1st_notekey_demo, exact = FALSE)
+wilcoxon_note_num_age
+
+#Sex
+sex_drop <- RT_1st_notekey_demo[!(RT_1st_notekey_demo$sex=="Unknown"),]
+by(sex_drop[c("note_num")], sex_drop$sex, summary)
+wilcoxon_note_num_sex <- wilcox.test(note_num ~ sex, data = sex_drop, exact = FALSE)
+wilcoxon_note_num_sex
+
+#Language - drop unknown
+lang_drop <- RT_1st_notekey_demo[!(RT_1st_notekey_demo$Lang_grouped=="Unknown/Declined"),]
+lang_drop <- lang_drop[!(lang_drop$Lang_grouped=="Unknown"),]
+lang_drop <- lang_drop[!(lang_drop$Lang_grouped=="Declined"),]
+lang_drop <- lang_drop[!(lang_drop$Lang_grouped=="*Unspecified"),]
+by(lang_drop[c("note_num")], lang_drop$Lang_grouped, summary)
+wilcoxon_note_num_lang <- wilcox.test(note_num ~ Lang_grouped, data = lang_drop, exact = FALSE)
+wilcoxon_note_num_lang
+
+#Race - drop unknown
+race_drop <- RT_1st_notekey_demo[!(RT_1st_notekey_demo$Race_grouped=="Unknown"),]
+race_drop <- RT_1st_notekey_demo[!(RT_1st_notekey_demo$Race_grouped=="Unknown"),]
+by(race_drop[c("note_num")], race_drop$Race_grouped, summary)
+wilcoxon_note_num_race <- wilcox.test(note_num ~ Race_grouped, data = race_drop, exact = FALSE)
+wilcoxon_note_num_race
+
+#Ethnicity - drop unknown
+eth_drop <- RT_1st_notekey_demo[!(RT_1st_notekey_demo$ethnicity=="Unknown/Declined"),]
+eth_drop <- eth_drop[!(eth_drop$ethnicity=="Declined"),]
+eth_drop <- eth_drop[!(eth_drop$ethnicity=="Unknown"),]
+by(eth_drop[c("note_num")], eth_drop$ethnicity, summary)
+wilcoxon_note_num_ethnicity <- wilcox.test(note_num ~ ethnicity, data = eth_drop, exact = FALSE)
+wilcoxon_note_num_ethnicity
+
+#Marital status - drop unknown
+marital_drop <- RT_1st_notekey_demo[!(RT_1st_notekey_demo$marital_grouped=="Unknown"),]
+marital_drop <- marital_drop[!(marital_drop$marital_grouped=="Declined"),]
+marital_drop <- marital_drop[!(marital_drop$marital_grouped=="Unknown/Declined"),]
+by(marital_drop[c("note_num")], marital_drop$marital_grouped, summary)
+wilcoxon_note_num_marital <- wilcox.test(note_num ~ marital_grouped, data = marital_drop, exact = FALSE)
+wilcoxon_note_num_marital
+```
+
+##################### Median time (days) between diagnosis of bone mets and 1st palliative RT (Wilcoxon rank sum test)
+#Make new column for difference in days between dx date and RT start date (diff_dx_RT)
+#Convert diff days to numeric
+```{r}
+RTDemo_1st$Rtstart<-as.Date(RTDemo_1st$Rtstart,format="%m/%d/%y")
+RTDemo_1st$dxdate<-as.Date(RTDemo_1st$dxdate,format="%m/%d/%y")
+RTDemo_1st$diff_dx_RT <- as.numeric(difftime(RTDemo_1st$Rtstart,RTDemo_1st$dxdate,units=c("days")))
+RTDemo_1st
+median(RTDemo_1st$diff_dx_RT)
+range(RTDemo_1st$diff_dx_RT)
+quantile(RTDemo_1st$diff_dx_RT)
+```
+
+##################### Median time (days) between 1st and 2nd+ palliative RT (Wilcoxon rank sum test)
+#Join RTDemo_2nd (ptkey, RTcourse, and Rtstart columns) to RTDemo_1st (need Rtstart, ptkey columns) - join on ptkey
+#Select the rows only where RTcourse = 2
+#Make new column for difference in days between RT start dates (diff_1stand2ndRT)
+#Convert diff days to numeric
+```{r}
+joined_data <- semi_join(RTDemo_1st, RTDemo_2nd, by = "ptkey")
+View(joined_data)
+
+joined_2nd <- semi_join(RTDemo_2nd, joined_data, by = "ptkey")
+View(joined_2nd)
+
+joined_filt <- joined_2nd %>%
+  filter(RTcourse == 2)
+View(joined_filt)
+
+joined_1stand2nd <- merge(joined_filt, joined_data, by = "ptkey", all.x = TRUE)
+View(joined_1stand2nd)
+
+joined_1stand2nd$Rtstart.x<-as.Date(joined_1stand2nd$Rtstart.x,format="%m/%d/%y")
+joined_1stand2nd$Rtstart.y<-as.Date(joined_1stand2nd$Rtstart.y,format="%m/%d/%y")
+joined_1stand2nd$diff_1stand2ndRT <- as.numeric(difftime(joined_1stand2nd$Rtstart.x,joined_1stand2nd$Rtstart.y,units=c("days")))
+joined_1stand2nd
+median(joined_1stand2nd$diff_1stand2ndRT)
+range(joined_1stand2nd$diff_1stand2ndRT)
+quantile(joined_1stand2nd$diff_1stand2ndRT)
+
+```
+
+###################FINDING first occurrence of symptom documentation up to 30 days before RT start
+#Read in the tables (these tables *only* have the symptom of pain, according to file name); no pts here if no pain
+```{r}
+findingfirst_pain_dx <- read.csv("./BoneMets_CTCAE_dx_ctcaelong_filtered_pain.csv", header = TRUE)
+findingfirst_pain_1stRT <- read.csv("./BoneMets_CTCAE_1stRT_ctcaelong_filtered_pain.csv", header = TRUE)
+findingfirst_pain_2ndRT <- read.csv("./BoneMets_CTCAE_2ndRT_ctcaelong_filtered_pain.csv", header = TRUE)
+```
+
+#First occurrence of symptom before dx
+#Group by "ptkey" and keep the row with the largest value in "diff_days_sxdx"
+```{r}
+#Pain before dx
+findingfirst_pain_dx <- findingfirst_pain_dx %>%
+  select(ptkey, diff_days_sxdx)
+findingfirst_pain_dx <- distinct(findingfirst_pain_dx) #Drop duplicate rows
+
+first_pain_dx <- findingfirst_pain_dx %>%
+  group_by(ptkey) %>%
+  filter(diff_days_sxdx == max(diff_days_sxdx)) %>%
+  ungroup()
+View(first_pain_dx)
+
+median(first_pain_dx$diff_days_sxdx)
+range(first_pain_dx$diff_days_sxdx)
+quantile(first_pain_dx$diff_days_sxdx)
+
+#Pain before 1st RT
+findingfirst_pain_1stRT <- findingfirst_pain_1stRT %>%
+  select(ptkey, diff_days_sxRT)
+findingfirst_pain_1stRT <- distinct(findingfirst_pain_1stRT) #Drop duplicate rows
+
+first_pain_1stRT <- findingfirst_pain_1stRT %>%
+  group_by(ptkey) %>%
+  filter(diff_days_sxRT == max(diff_days_sxRT)) %>%
+  ungroup()
+
+median(first_pain_1stRT$diff_days_sxRT)
+range(first_pain_1stRT$diff_days_sxRT)
+quantile(first_pain_1stRT$diff_days_sxRT)
+
+#Pain before 2nd RT
+findingfirst_pain_2ndRT <- findingfirst_pain_2ndRT %>%
+  select(ptkey, diff_days_sxRT)
+findingfirst_pain_2ndRT <- distinct(findingfirst_pain_2ndRT) #Drop duplicate rows
+
+first_pain_2ndRT <- findingfirst_pain_2ndRT %>%
+  group_by(ptkey) %>%
+  filter(diff_days_sxRT == max(diff_days_sxRT)) %>%
+  ungroup()
+
+median(first_pain_2ndRT$diff_days_sxRT)
+range(first_pain_2ndRT$diff_days_sxRT)
+quantile(first_pain_2ndRT$diff_days_sxRT)
+```
+
+##################### COMBINING RTDemo_pain and RTDemo_pain_2nd
+
+```{r}
+RTDemo_pain_combined <- rbind(RTDemo_pain, RTDemo_pain_2nd)
+RTDemo_pathfx_combined <- rbind(RTDemo_pathfx, RTDemo_pathfx_2nd)
+```
+
+########## DROP UNKNOWN from Language
+```{r}
+#Drop unknown/declined from language
+dxDemo_pain <- filter(dxDemo_pain, !Lang_grouped %in% c("Unknown/Declined"))
+dxDemo_pain <- filter(dxDemo_pain, !Lang_grouped %in% c("*Unspecified"))
+table(dxDemo_pain$Lang_grouped)
+```
+
+
+##################### LOGISTIC REGRESSION - UNIVARIABLE
+
+#Define the reference codes: DATA$COLOR <- relevel(DATA$COLOR,"White")
+```{r}
+dxDemo_pain$sex <- relevel(factor(dxDemo_pain$sex), "Male")
+dxDemo_pain$Lang_grouped <- relevel(factor(dxDemo_pain$Lang_grouped), "English")
+dxDemo_pain$Race_grouped <- relevel(factor(dxDemo_pain$Race_grouped), "White")
+dxDemo_pain$Race_reformatted <- relevel(factor(dxDemo_pain$Race_reformatted), "White")
+dxDemo_pain$ethnicity <- relevel(factor(dxDemo_pain$ethnicity), "Not Hispanic or Latino")
+dxDemo_pain$marital_grouped <- relevel(factor(dxDemo_pain$marital_grouped), "Partnered")
+dxDemo_pain$Histology <- relevel(factor(dxDemo_pain$Histology), "Prostate")
+dxDemo_pain$Insur_grouped <- relevel(factor(dxDemo_pain$Insur_grouped), "Private")
+
+RTDemo_pain_combined$sex <- relevel(factor(RTDemo_pain_combined$sex), "Male")
+RTDemo_pain_combined$Lang_grouped <- relevel(factor(RTDemo_pain_combined$Lang_grouped), "English")
+RTDemo_pain_combined$Race_grouped <- relevel(factor(RTDemo_pain_combined$Race_grouped), "White")
+RTDemo_pain_combined$Race_reformatted <- relevel(factor(RTDemo_pain_combined$Race_reformatted), "White")
+RTDemo_pain_combined$ethnicity <- relevel(factor(RTDemo_pain_combined$ethnicity), "Not Hispanic or Latino")
+RTDemo_pain_combined$marital_grouped <- relevel(factor(RTDemo_pain_combined$marital_grouped), "Partnered")
+RTDemo_pain_combined$Histology <- relevel(factor(RTDemo_pain_combined$Histology), "Prostate")
+RTDemo_pain_combined$Insur_grouped <- relevel(factor(RTDemo_pain_combined$Insur_grouped), "Private")
+```
+
+#One by one - pain before dx
+```{r}
+Pain_age <- glm(Pain~ageatRT, family="binomial", data=dxDemo_pain) %>%
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%        # exponentiate and produce CIs
+  mutate(across(where(is.numeric), round, digits = 4))  # round all numeric columns
+Pain_age
+
+dxDemo_pain <- filter(dxDemo_pain, !sex %in% c("Unknown"))
+Pain_sex <- glm(Pain~sex, family="binomial", data=dxDemo_pain) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%        
+  mutate(across(where(is.numeric), round, digits = 4))
+Pain_sex
+
+#Drop unknown/declined from language
+dxDemo_pain <- filter(dxDemo_pain, !Lang_grouped %in% c("Unknown/Declined"))
+dxDemo_pain <- filter(dxDemo_pain, !Lang_grouped %in% c("*Unspecified"))
+table(dxDemo_pain$Lang_grouped)
+Pain_lang <- glm(Pain~Lang_grouped, family="binomial", data=dxDemo_pain) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%        
+  mutate(across(where(is.numeric), round, digits = 4))
+Pain_lang
+
+dxDemo_pain <- filter(dxDemo_pain, !Race_grouped %in% c("Unknown"))
+Pain_race <- glm(Pain~Race_grouped, family="binomial", data=dxDemo_pain) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 4)) 
+Pain_race
+
+dxDemo_pain <- filter(dxDemo_pain, !Race_reformatted %in% c("Unknown"))
+Pain_race_all <- glm(Pain~Race_reformatted, family="binomial", data=dxDemo_pain) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 4)) 
+Pain_race_all
+
+dxDemo_pain <- filter(dxDemo_pain, !ethnicity %in% c("Unknown/Declined"))
+dxDemo_pain <- filter(dxDemo_pain, !ethnicity %in% c("Unknown"))
+dxDemo_pain <- filter(dxDemo_pain, !ethnicity %in% c("Declined"))
+Pain_eth <- glm(Pain~ethnicity, family="binomial", data=dxDemo_pain) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 4)) 
+Pain_eth
+
+dxDemo_pain <- filter(dxDemo_pain, !marital_grouped %in% c("Unknown/Declined"))
+Pain_mar <- glm(Pain~marital_grouped, family="binomial", data=dxDemo_pain) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 4)) 
+Pain_mar
+
+dxDemo_pain$Insur_regrouped <- recode(dxDemo_pain$Insur_grouped,
+                                           "Private" = "Private",
+                                           "Medicaid" = "Medicaid or uninsured",
+                                           "Medicare" = "Medicare or other",
+                                           "Other" = "Medicare or other",
+                                           "Uninsured or selfpay" = "Medicaid or uninsured")
+
+Pain_insur <- glm(Pain~Insur_regrouped, family="binomial", data=dxDemo_pain) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 4)) 
+Pain_insur
+
+Pain_histology <- glm(Pain~Histology, family="binomial", data=dxDemo_pain) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 4)) 
+Pain_histology
+```
+
+#One by one - pain before all courses of RT
+```{r}
+Pain_age <- glm(Pain~ageatRT, family="binomial", data=RTDemo_pain_combined) %>%
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%        # exponentiate and produce CIs
+  mutate(across(where(is.numeric), round, digits = 6))  # round all numeric columns
+Pain_age
+
+RTDemo_pain_combined <- filter(RTDemo_pain_combined, !sex %in% c("Unknown"))
+Pain_sex <- glm(Pain~sex, family="binomial", data=RTDemo_pain_combined) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%        
+  mutate(across(where(is.numeric), round, digits = 6))
+Pain_sex
+
+#Drop unknown/declined from language
+RTDemo_pain_combined <- filter(RTDemo_pain_combined, !Lang_grouped %in% c("Unknown/Declined"))
+RTDemo_pain_combined <- filter(RTDemo_pain_combined, !Lang_grouped %in% c("*Unspecified"))
+table(RTDemo_pain_combined$Lang_grouped)
+Pain_lang <- glm(Pain~Lang_grouped, family="binomial", data=RTDemo_pain_combined) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%        
+  mutate(across(where(is.numeric), round, digits = 6))
+Pain_lang
+
+RTDemo_pain_combined <- filter(RTDemo_pain_combined, !Race_grouped %in% c("Unknown"))
+Pain_race <- glm(Pain~Race_grouped, family="binomial", data=RTDemo_pain_combined) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 6)) 
+Pain_race
+
+Pain_race_all <- glm(Pain~Race_reformatted, family="binomial", data=RTDemo_pain_combined) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 6))
+Pain_race_all 
+
+RTDemo_pain_combined <- filter(RTDemo_pain_combined, !ethnicity %in% c("Unknown/Declined"))
+RTDemo_pain_combined <- filter(RTDemo_pain_combined, !ethnicity %in% c("Unknown"))
+RTDemo_pain_combined <- filter(RTDemo_pain_combined, !ethnicity %in% c("Declined"))
+Pain_eth <- glm(Pain~ethnicity, family="binomial", data=RTDemo_pain_combined) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 6)) 
+Pain_eth
+
+RTDemo_pain_combined <- filter(RTDemo_pain_combined, !marital_grouped %in% c("Unknown/Declined"))
+Pain_mar <- glm(Pain~marital_grouped, family="binomial", data=RTDemo_pain_combined) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 6)) 
+Pain_mar
+
+RTDemo_pain_combined$Insur_regrouped <- recode(RTDemo_pain_combined$Insur_grouped,
+                                           "Private" = "Private",
+                                           "Medicaid" = "Medicaid or uninsured",
+                                           "Medicare" = "Medicare or other",
+                                           "Other" = "Medicare or other",
+                                           "Uninsured or selfpay" = "Medicaid or uninsured")
+
+Pain_insur <- glm(Pain~Insur_regrouped, family="binomial", data=RTDemo_pain_combined) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 6)) 
+Pain_insur
+
+Pain_histology <- glm(Pain~Histology, family="binomial", data=RTDemo_pain_combined) %>% 
+  tidy(exponentiate = TRUE, conf.int = TRUE) %>%       
+  mutate(across(where(is.numeric), round, digits = 6)) 
+Pain_histology
+```
+
+##################### LOGISTIC REGRESSION - MULTIVARIABLE
+
+#MVA without interaction
+```{r}
+#This MVA has all variables and factors - for the table - pain before dx
+Pain_dx_mva <- glm(Pain ~ ageatRT + sex + Lang_grouped + Race_reformatted + ethnicity + marital_grouped + Insur_regrouped + Histology, family=binomial, data=dxDemo_pain)
+summary(Pain_dx_mva)
+
+#This MVA has all variables and factors - for the table - pain before RT
+Pain_RT_combined <- glm(Pain ~ ageatRT + sex + Lang_grouped + Race_reformatted + ethnicity + marital_grouped + Insur_regrouped + Histology, family=binomial, data=RTDemo_pain_combined)
+summary(Pain_RT_combined)
+```
+
+###MVA with interactions
+###INCLUDE THE ENTIRE REGRESSION MODEL WITH ALL THE OTHER VARIABLES
+##Variable interactions I am interested in (based on a priori hypothesis): 
+#Sex: Race
+#Sex: Primary cancer
+#Race: Primary cancer
+
+# MVA w/ INTERACTIONS - PAIN BEFORE DIAGNOSIS
+```{r}
+#sex * Race_reformatted
+hypotheses(Pain_dx_mva, hypothesis = "sexFemale + `sexFemale:Race_reformattedAsian` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "sexFemale + `sexFemale:Race_reformattedBlack` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "sexFemale + `sexFemale:Race_reformattedOther` = 0")
+
+#sex * Histology
+hypotheses(Pain_dx_mva, hypothesis = "sexFemale + `sexFemale:HistologyBreast` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "sexFemale + `sexFemale:HistologyHematologic` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "sexFemale + `sexFemale:HistologyLung` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "sexFemale + `sexFemale:HistologyOther` = 0")
+
+## No female:sarcoma patients
+
+#Race_reformatted * Histology
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologyBreast` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologyBreast` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologyBreast` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologyHematologic` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologyHematologic` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologyHematologic` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologyLung` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologyLung` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologyLung` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologyOther` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologyOther` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologyOther` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologySarcoma` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologySarcoma` = 0")
+hypotheses(Pain_dx_mva, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologySarcoma` = 0")
+
+# MVA w/ INTERACTIONS - PAIN BEFORE PALLIATIVE RT
+```{r}
+#sex * Race_reformatted
+hypotheses(Pain_RT_combined, hypothesis = "sexFemale + `sexFemale:Race_reformattedAsian` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "sexFemale + `sexFemale:Race_reformattedBlack` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "sexFemale + `sexFemale:Race_reformattedOther` = 0")
+
+#sex * Histology
+hypotheses(Pain_RT_combined, hypothesis = "sexFemale + `sexFemale:HistologyBreast` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "sexFemale + `sexFemale:HistologyHematologic` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "sexFemale + `sexFemale:HistologyLung` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "sexFemale + `sexFemale:HistologyOther` = 0")
+
+#No female:sarcoma patients
+
+#Race_reformatted * Histology
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologyBreast` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologyBreast` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologyBreast` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologyHematologic` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologyHematologic` = 0")
+
+#NA: No Race_reformattedOther:HistologyHematologic
+
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologyLung` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologyLung` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologyLung` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologyOther` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologyOther` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologyOther` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedAsian + `Race_reformattedAsian:HistologySarcoma` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedBlack + `Race_reformattedBlack:HistologySarcoma` = 0")
+hypotheses(Pain_RT_combined, hypothesis = "Race_reformattedOther + `Race_reformattedOther:HistologySarcoma` = 0")
+
+### Bonferroni correction for MVA with interactions = p-value * # of comparison points within each level
+
+### Intersectionality demographics
+```{r}
+#Sex: Race
+table(RTDemo_pain$sex)
+RTDemo_pain %>% 
+  group_by(sex, Race_reformatted) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain))
+
+#Sex: Histology
+table(RTDemo_pain$sex)
+RTDemo_pain %>% 
+  group_by(sex, Histology) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain))
+
+#Race: Histology
+table(RTDemo_pain$Race_reformatted)
+RTDemo_pain %>% 
+  group_by(Race_reformatted, Histology) %>% 
+  summarise(percent = 100 * n() / nrow(RTDemo_pain) )
+```
