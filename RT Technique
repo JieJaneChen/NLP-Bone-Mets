@@ -1,0 +1,76 @@
+#Copyright (C) UCSF/Jie Jane Chen/Julian Hong 2025
+#GNU General Public License v2.0
+#Please see LICENSE and README.md
+
+import pandas as pd
+import re
+pd.set_option('display.max_columns', None)
+
+# read in bone met patients from jane files
+df1 = pd.read_csv('/Users/mariannaelia/Desktop/for jane/RTDemo_1st_8.14.23.csv', index_col=0)
+df2 = pd.read_csv('/Users/mariannaelia/Desktop/for jane/RTDemo_2nd_8.14.23.csv', index_col=0)
+df = pd.concat([df1,df2])
+
+# read in deid shield files
+deid_allmq = pd.read_csv('/Volumes/jhong9_IRB_19_29746_shared/For Upload/DEID_shield_allmq_tableau_20250423.csv',
+                        index_col=0)
+
+deid_aria = pd.read_csv('/Volumes/jhong9_IRB_19_29746_shared/For Upload/DEID_shield_aria_tableau_20250423.csv',
+                       index_col=0)
+
+
+# remove timestamp from last tx datetime in allmq file for better mergeing
+deid_allmq['deid_Last Tx'] = pd.to_datetime(deid_allmq['deid_Last Tx'])
+deid_allmq['deid_Last Tx'] = deid_allmq['deid_Last Tx'].dt.date
+
+# extract numerical course from weird aria course labeling -- this is not going to catch all courses
+# some of them don't have a number in the string at all
+deid_aria['course_extracted'] = deid_aria['Course'].str.extract(r'(\d+)').astype('Int64')
+
+# merge bone met df with aria file 
+# drop patients who didn't get a hit
+df_aria = pd.merge(df, deid_aria, how='left', left_on=['ptkey', 'RTcourse'], 
+                  right_on=['deid_patDurableKey', 'course_extracted']).dropna(subset=['deid_patDurableKey'])
+
+# merge bone met df with allmq file
+# drop patients who didn't get a hit
+df_all = pd.merge(df, deid_allmq, how='left', left_on=['ptkey', 'RTcourse'], 
+                  right_on=['deid_patDurableKey', 'Course']).dropna(subset=['deid_patDurableKey'])
+
+# add course_extracted column to allmq to concatenate allmq and aria merged dfs
+df_all['course_extracted'] = df_all['Course'].astype('Int64')
+
+# combine dataframes of all matched patients and clean up
+df_matched = pd.concat([df_all, df_aria]).drop_duplicates()
+df_matched.reset_index(inplace=True, drop=True)
+# some courses have duplicate entries here because deid SHIELD data is not super clean
+# occasionally will have multiple entries for the same exact info with only the tx dates changing
+
+df_matched.to_csv('./bone_mets_pts_matched_to_deidSHIELD.csv')
+
+# number of pts/courses in original data
+len(df[['ptkey', 'RTcourse']].drop_duplicates())
+
+# number of pts/courses in the matched dataset
+len(df_matched[['ptkey', 'RTcourse']].drop_duplicates())
+
+# check for patients/courses that didn't get a hit
+a = df[['ptkey', 'RTcourse']]
+b = df_matched[['ptkey', 'RTcourse']]
+missing_rows = a.merge(
+    b,
+    how='left',
+    indicator=True
+).query('_merge == "left_only"').drop(columns='_merge')
+
+missing_rows.reset_index(inplace=True, drop=True)
+missing_rows
+
+missing_rows.to_csv('./bone_mets_pts_courses_no_match.csv')
+
+# courses that are duplicated in matched data: mostly either
+# multiple dates listed for the same course in SHIELD data
+# or multiple diagnoss associated with a single course 
+df_matched[df_matched[['ptkey', 'RTcourse']].duplicated()]
+
+# All rows were manually reviewed for accuracy after data download to remove patients who received SBRT
