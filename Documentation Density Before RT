@@ -1,0 +1,1267 @@
+#Copyright (C) UCSF/Jie Jane Chen/Julian Hong 2025
+#GNU General Public License v2.0
+#Please see LICENSE and README.md
+
+import pandas as pd
+import duckdb
+import numpy as np
+import pandas as pd
+import duckdb
+data_asset = 'DEID_CDW'
+table_names = ['encounterfact']
+con = duckdb.connect()
+queried_tables = dict()
+for table in table_names:
+file_path = f'/wynton/protected/project/ic/data/parquet/{data_asset}/{table}/*.parquet'
+queried_tables[table] = duckdb.read_parquet(file_path)
+encounterfact = queried_tables['encounterfact']
+df1 = pd.read_csv('RT1st_ctcaelong.csv') # First RT encounter
+df2 = pd.read_csv('RT2nd_ctcaelong.csv') # Second RT/ Subsequent encounter
+#df_3 = pd.read_csv('dx_ctcaelong.csv') # Before dx
+# Combine
+df_3 = pd.concat([df1, df2])
+df_3 = df_3.drop_duplicates(subset='NOTE_ID')
+df_3['NOTE_ID'] = df_3['NOTE_ID'].fillna(0)
+# Count total notes
+total_notes = df_3['NOTE_ID'].nunique()
+# Count notes per patient
+notes_per_person = df_3.groupby('ptkey')['NOTE_ID'].nunique()
+# Calculate median and IQR
+median_notes = notes_per_person.median()
+q1_notes = notes_per_person.quantile(0.25)
+q3_notes = notes_per_person.quantile(0.75)
+median_iqr_notes = f"{median_notes} ({q1_notes}-{q3_notes})"
+# Pain Mentions OVERALL
+df_3['concept_code.y'] = df_3['concept_code.y'].astype(str)
+pain_mentions = df_3[df_3['concept_code.y'] == '10033371'].nunique()
+# Pain Mentions Per Person
+df_3['concept_code.y'] = df_3['concept_code.y'].astype(str)
+pain_mentions_per_person = df_3[df_3['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+median_pain = pain_mentions_per_person.median()
+q1_pain = pain_mentions_per_person.quantile(0.25)
+q3_pain = pain_mentions_per_person.quantile(0.75)
+median_iqr_pain = f"{median_pain} ({q1_pain}-{q3_pain})"
+# Get unique patients with their sex
+dfd1 = pd.read_csv('RTDemo_1st_8.14.23.csv') # First RT encounter
+dfd2 = pd.read_csv('RTDemo_2nd_8.14.23.csv') # Second RT/ Subsequent encounter
+demographics = pd.concat([dfd1, dfd2], ignore_index=True)
+demographics_clean = demographics.drop_duplicates(subset=['ptkey'], keep='first')
+# Merge
+df_with_demo = df_3.merge(demographics_clean[['ptkey', 'sex', 'preferredlanguage',
+'Race_formatted', 'ethnicity', 'Insur_grouped',
+'maritalstatus','Prostate','Breast','Lung','Bone.soft.tissue.and.sarcoma','Hematologic','Bladde
+r.and.ureter', 'CNS', 'Colorectal', 'GI.other', 'Gynecologic', 'Head.and.neck',
+'Kidney.and.renal.pelvis', 'Liver.and.bile.duct', 'Melanoma',
+'Metastatic', 'Other', 'Pancreatic', 'Skin.other', ]], on='ptkey', how='left')
+df_with_demo = df_with_demo.fillna(0)
+print(df_with_demo['sex'].unique())
+## FEMALE
+female_notes = df_with_demo[df_with_demo['sex'] == 'Female']
+female_total_notes = female_notes['NOTE_ID'].nunique()
+# Female: Per person number of notes (median and IQR)
+female_notes_per_person = female_notes.groupby('ptkey')['NOTE_ID'].nunique()
+female_median_notes = female_notes_per_person.median()
+female_q1_notes = female_notes_per_person.quantile(0.25)
+female_q3_notes = female_notes_per_person.quantile(0.75)
+female_median_iqr_notes = f"{female_median_notes} ({female_q1_notes}-
+{female_q3_notes})"
+# Female: pain mentions (per person - median and IQR)
+female_pain_per_person = female_notes[female_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+female_median_pain = female_pain_per_person.median()
+female_q1_pain = female_pain_per_person.quantile(0.25)
+female_q3_pain = female_pain_per_person.quantile(0.75)
+female_median_iqr_pain = f"{female_median_pain} ({female_q1_pain}-{female_q3_pain})"
+## MALE
+male_notes = df_with_demo[df_with_demo['sex'] == 'Male']
+# MALE: Overall number of notes
+male_total_notes = male_notes['NOTE_ID'].nunique()
+# MALE: Per person number of notes (median and IQR)
+male_notes_per_person = male_notes.groupby('ptkey')['NOTE_ID'].nunique()
+male_median_notes = male_notes_per_person.median()
+male_q1_notes = male_notes_per_person.quantile(0.25)
+male_q3_notes = male_notes_per_person.quantile(0.75)
+male_median_iqr_notes = f"{male_median_notes} ({male_q1_notes}-{male_q3_notes})"
+# MALE: pain mentions (overall)
+male_pain_mentions_overall = male_notes[male_notes['concept_code.y'] ==
+'10033371'].nunique()
+# MALE: pain mentions (per person - median and IQR)
+male_pain_per_person = male_notes[male_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+male_median_pain = male_pain_per_person.median()
+male_q1_pain = male_pain_per_person.quantile(0.25)
+male_q3_pain = male_pain_per_person.quantile(0.75)
+male_median_iqr_pain = f"{male_median_pain} ({male_q1_pain}-{male_q3_pain})"
+## UNKNOWN GENDER
+unknown_notes = df_with_demo[df_with_demo['sex'] == 'Unknown']
+# unknown: Overall number of notes
+unknown_total_notes = unknown_notes['NOTE_ID'].nunique()
+# unknown: Per person number of notes (median and IQR)
+unknown_notes_per_person = unknown_notes.groupby('ptkey')['NOTE_ID'].nunique()
+unknown_median_notes = unknown_notes_per_person.median()
+unknown_q1_notes = unknown_notes_per_person.quantile(0.25)
+unknown_q3_notes = unknown_notes_per_person.quantile(0.75)
+unknown_median_iqr_notes = f"{unknown_median_notes} ({unknown_q1_notes}-
+{unknown_q3_notes})"
+# unknown: pain mentions (per person - median and IQR)
+unknown_pain_per_person = unknown_notes[unknown_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+print(unknown_pain_per_person)
+unknown_median_pain = unknown_pain_per_person.median() if
+len(unknown_pain_per_person) > 0 else 0
+unknown_q1_pain = unknown_pain_per_person.quantile(0.25) if
+len(unknown_pain_per_person) > 0 else 0
+unknown_q3_pain = unknown_pain_per_person.quantile(0.75) if
+len(unknown_pain_per_person) > 0 else 0
+unknown_median_iqr_pain = f"{unknown_median_pain} ({unknown_q1_pain}-
+{unknown_q3_pain})"
+### LANGUAGE SECTION
+english_notes = df_with_demo[df_with_demo['preferredlanguage'] == 'English']
+# English: Overall number of notes
+english_total_notes = english_notes['NOTE_ID'].nunique()
+# English: Per person number of notes (median and IQR)
+english_notes_per_person = english_notes.groupby('ptkey')['NOTE_ID'].nunique()
+english_median_notes = english_notes_per_person.median()
+english_q1_notes = english_notes_per_person.quantile(0.25)
+english_q3_notes = english_notes_per_person.quantile(0.75)
+english_median_iqr_notes = f"{english_median_notes} ({english_q1_notes}-
+{english_q3_notes})"
+# English: Pain mentions (overall)
+english_pain_mentions_overall = english_notes[english_notes['concept_code.y'] ==
+'10033371'].nunique()
+# English: Pain mentions (per person - median and IQR)
+english_pain_per_person = english_notes[english_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+english_median_pain = english_pain_per_person.median()
+english_q1_pain = english_pain_per_person.quantile(0.25)
+english_q3_pain = english_pain_per_person.quantile(0.75)
+english_median_iqr_pain = f"{english_median_pain} ({english_q1_pain}-{english_q3_pain})"
+Chinese_notes = df_with_demo[df_with_demo['preferredlanguage'].str.contains('Chinese',
+na=False)]
+# Chinese: Overall number of notes
+Chinese_total_notes = Chinese_notes['NOTE_ID'].nunique()
+# Chinese: Per person number of notes (median and IQR)
+Chinese_notes_per_person = Chinese_notes.groupby('ptkey')['NOTE_ID'].nunique()
+Chinese_median_notes = Chinese_notes_per_person.median()
+Chinese_q1_notes = Chinese_notes_per_person.quantile(0.25)
+Chinese_q3_notes = Chinese_notes_per_person.quantile(0.75)
+Chinese_median_iqr_notes = f"{Chinese_median_notes} ({Chinese_q1_notes}-
+{Chinese_q3_notes})"
+# Chinese: Pain mentions (overall)
+Chinese_pain_mentions_overall = Chinese_notes[Chinese_notes['concept_code.y'] ==
+'10033371'].nunique()
+# Chinese: Pain mentions (per person - median and IQR)
+Chinese_pain_per_person = Chinese_notes[Chinese_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+Chinese_median_pain = Chinese_pain_per_person.median()
+Chinese_q1_pain = Chinese_pain_per_person.quantile(0.25)
+Chinese_q3_pain = Chinese_pain_per_person.quantile(0.75)
+Chinese_median_iqr_pain = f"{Chinese_median_pain} ({Chinese_q1_pain}-
+{Chinese_q3_pain})"
+### LANGUAGE SECTION
+spanish_notes = df_with_demo[df_with_demo['preferredlanguage'] == 'Spanish']
+# spanish: Overall number of notes
+spanish_total_notes = spanish_notes['NOTE_ID'].nunique()
+# spanish: Per person number of notes (median and IQR)
+spanish_notes_per_person = spanish_notes.groupby('ptkey')['NOTE_ID'].nunique()
+spanish_median_notes = spanish_notes_per_person.median()
+spanish_q1_notes = spanish_notes_per_person.quantile(0.25)
+spanish_q3_notes = spanish_notes_per_person.quantile(0.75)
+spanish_median_iqr_notes = f"{spanish_median_notes} ({spanish_q1_notes}-
+{spanish_q3_notes})"
+# spanish: Pain mentions (overall)
+spanish_pain_mentions_overall = spanish_notes[spanish_notes['concept_code.y'] ==
+'10033371']['NOTE_ID'].nunique()
+# spanish: Pain mentions (per person - median and IQR)
+spanish_pain_per_person = spanish_notes[spanish_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+spanish_median_pain = spanish_pain_per_person.median()
+spanish_q1_pain = spanish_pain_per_person.quantile(0.25)
+spanish_q3_pain = spanish_pain_per_person.quantile(0.75)
+spanish_median_iqr_pain = f"{spanish_median_pain} ({spanish_q1_pain}-
+{spanish_q3_pain})"
+### LANGUAGE SECTION
+russian_notes = df_with_demo[df_with_demo['preferredlanguage'] == 'Russian']
+# russian: Overall number of notes
+russian_total_notes = russian_notes['NOTE_ID'].nunique()
+# russian: Per person number of notes (median and IQR)
+russian_notes_per_person = russian_notes.groupby('ptkey')['NOTE_ID'].nunique()
+russian_median_notes = russian_notes_per_person.median()
+russian_q1_notes = russian_notes_per_person.quantile(0.25)
+russian_q3_notes = russian_notes_per_person.quantile(0.75)
+russian_median_iqr_notes = f"{russian_median_notes} ({russian_q1_notes}-
+{russian_q3_notes})"
+# russian: Pain mentions (overall)
+russian_pain_mentions_overall = russian_notes[russian_notes['concept_code.y'] ==
+'10033371'].nunique()
+# russian: Pain mentions (per person - median and IQR)
+russian_pain_per_person = russian_notes[russian_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+russian_median_pain = russian_pain_per_person.median()
+russian_q1_pain = russian_pain_per_person.quantile(0.25)
+russian_q3_pain = russian_pain_per_person.quantile(0.75)
+russian_median_iqr_pain = f"{russian_median_pain} ({russian_q1_pain}-
+{russian_q3_pain})"
+### LANGUAGE SECTION
+#Unknown Language
+is_unknown_language = (
+(df_with_demo['preferredlanguage'] == 'Unknown/Declined') |
+(df_with_demo['preferredlanguage'] == '*Unspecified'))
+unknown_lang_notes = df_with_demo[is_unknown_language]
+# unknown: Overall number of notes
+unknown_lang_total_notes = unknown_lang_notes['NOTE_ID'].nunique()
+# unknown: Per person number of notes (median and IQR)
+unknown_lang_notes_per_person =
+unknown_lang_notes.groupby('ptkey')['NOTE_ID'].nunique()
+unknown_lang_median_notes = unknown_lang_notes_per_person.median()
+unknown_lang_q1_notes = unknown_lang_notes_per_person.quantile(0.25)
+unknown_lang_q3_notes = unknown_lang_notes_per_person.quantile(0.75)
+unknown_lang_median_iqr_notes = f"{unknown_lang_median_notes}
+({unknown_lang_q1_notes}-{unknown_lang_q3_notes})"
+# unknown: Pain mentions (overall)
+unknown_lang_pain_mentions_overall =
+unknown_lang_notes[unknown_lang_notes['concept_code.y'] == '10033371'].nunique()
+# unknown: Pain mentions (per person - median and IQR)
+unknown_lang_pain_per_person =
+unknown_lang_notes[unknown_lang_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+unknown_lang_median_pain = unknown_lang_pain_per_person.median() if
+len(unknown_lang_pain_per_person) > 0 else 0
+unknown_lang_q1_pain = unknown_lang_pain_per_person.quantile(0.25) if
+len(unknown_lang_pain_per_person) > 0 else 0
+unknown_lang_q3_pain = unknown_lang_pain_per_person.quantile(0.75) if
+len(unknown_lang_pain_per_person) > 0 else 0
+unknown_lang_median_iqr_pain = f"{unknown_lang_median_pain}
+({unknown_lang_q1_pain}-{unknown_lang_q3_pain})"
+### LANGUAGE SECTION
+exclude_languages = ['Spanish', 'Russian', 'English', 'Unknown/Declined', '*Unspecified']
+is_other_language = (
+(~df_with_demo['preferredlanguage'].isin(exclude_languages)) &
+(~df_with_demo['preferredlanguage'].str.contains('Chinese', case=False, na=False))
+)
+other_notes = df_with_demo[is_other_language]
+# other: Overall number of notes
+other_total_notes = (other_notes).nunique()
+other_notes_per_person = other_notes.groupby('ptkey')['NOTE_ID'].nunique()
+other_median_notes = other_notes_per_person.median()
+other_q1_notes = other_notes_per_person.quantile(0.25)
+other_q3_notes = other_notes_per_person.quantile(0.75)
+other_median_iqr_notes = f"{other_median_notes} ({other_q1_notes}-{other_q3_notes})"
+# other: Pain mentions (overall)
+other_pain_mentions_overall = other_notes[other_notes['concept_code.y'] ==
+'10033371'].nunique()
+# other: Pain mentions (per person - median and IQR)
+other_pain_per_person = other_notes[other_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+other_median_pain = other_pain_per_person.median()
+other_q1_pain = other_pain_per_person.quantile(0.25)
+other_q3_pain = other_pain_per_person.quantile(0.75)
+other_median_iqr_pain = f"{other_median_pain} ({other_q1_pain}-{other_q3_pain})"
+### RACE SECTION
+# White
+white_notes = df_with_demo[df_with_demo['Race_formatted'] == 'White']
+# White: Per person number of notes (median and IQR)
+white_notes_per_person = white_notes.groupby('ptkey')['NOTE_ID'].nunique()
+white_median_notes = white_notes_per_person.median()
+white_q1_notes = white_notes_per_person.quantile(0.25)
+white_q3_notes = white_notes_per_person.quantile(0.75)
+white_median_iqr_notes = f"{white_median_notes} ({white_q1_notes}-{white_q3_notes})"
+# White: Pain mentions (per person - median and IQR)
+white_pain_per_person = white_notes[white_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+white_median_pain = white_pain_per_person.median()
+white_q1_pain = white_pain_per_person.quantile(0.25)
+white_q3_pain = white_pain_per_person.quantile(0.75)
+white_median_iqr_pain = f"{white_median_pain} ({white_q1_pain}-{white_q3_pain})"
+# Asian
+asian_notes = df_with_demo[df_with_demo['Race_formatted'] == 'Asian']
+asian_notes_per_person = asian_notes.groupby('ptkey')['NOTE_ID'].nunique()
+asian_median_notes = asian_notes_per_person.median()
+asian_q1_notes = asian_notes_per_person.quantile(0.25)
+asian_q3_notes = asian_notes_per_person.quantile(0.75)
+asian_median_iqr_notes = f"{asian_median_notes} ({asian_q1_notes}-{asian_q3_notes})"
+asian_pain_per_person = asian_notes[asian_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+asian_median_pain = asian_pain_per_person.median()
+asian_q1_pain = asian_pain_per_person.quantile(0.25)
+asian_q3_pain = asian_pain_per_person.quantile(0.75)
+asian_median_iqr_pain = f"{asian_median_pain} ({asian_q1_pain}-{asian_q3_pain})"
+# Black or African American
+black_notes = df_with_demo[df_with_demo['Race_formatted'] == 'Black or African
+American']
+black_notes_per_person = black_notes.groupby('ptkey')['NOTE_ID'].nunique()
+black_median_notes = black_notes_per_person.median()
+black_q1_notes = black_notes_per_person.quantile(0.25)
+black_q3_notes = black_notes_per_person.quantile(0.75)
+black_median_iqr_notes = f"{black_median_notes} ({black_q1_notes}-{black_q3_notes})"
+black_pain_per_person = black_notes[black_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+black_median_pain = black_pain_per_person.median()
+black_q1_pain = black_pain_per_person.quantile(0.25)
+black_q3_pain = black_pain_per_person.quantile(0.75)
+black_median_iqr_pain = f"{black_median_pain} ({black_q1_pain}-{black_q3_pain})"
+#NOTE: Jane's R code already created this column and grouped as below but it seemed like
+for some reason some of them weren't captured so added this to make sure
+#"Native American or Alaska Native" = "Other",
+#"Black or African American" = "Black",
+#"Native Hawaiian or Other Pacific Islander" = "Other",
+#"Other Pacific Islander" = "Other",
+#"Asian" = "Asian",
+#"Other" = "Other",
+#"White or Caucasian" = "White",
+#"Declined" = "Unknown",
+#"Unknown" = "Unknown",
+#"*Unspecified" = "Unknown" )
+#Other races
+# Filter the dataframe first, then group
+other_race_notes = df_with_demo[df_with_demo['Race_formatted'].isin(['Other'])]
+other_race_notes_per_person = other_race_notes.groupby('ptkey')['NOTE_ID'].nunique()
+other_race_median_notes = other_race_notes_per_person.median()
+other_race_q1_notes = other_race_notes_per_person.quantile(0.25)
+other_race_q3_notes = other_race_notes_per_person.quantile(0.75)
+other_race_median_iqr_notes = f"{other_race_median_notes} ({other_race_q1_notes}-
+{other_race_q3_notes})"
+other_race_pain_per_person = other_race_notes[other_race_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+other_race_median_pain = other_race_pain_per_person.median()
+other_race_q1_pain = other_race_pain_per_person.quantile(0.25)
+other_race_q3_pain = other_race_pain_per_person.quantile(0.75)
+other_race_median_iqr_pain = f"{other_race_median_pain} ({other_race_q1_pain}-
+{other_race_q3_pain})"
+# Unknown Race
+# Filter for unknown race first
+unknown_race_df =
+df_with_demo[df_with_demo['Race_formatted'].isin(['Unknown','Declined','*Unspecified'])]
+unknown_race_notes_per_person =
+unknown_race_df.groupby('ptkey')['NOTE_ID'].nunique()
+unknown_race_median_notes = unknown_race_notes_per_person.median()
+unknown_race_q1_notes = unknown_race_notes_per_person.quantile(0.25)
+unknown_race_q3_notes = unknown_race_notes_per_person.quantile(0.75)
+unknown_race_median_iqr_notes = f"{unknown_race_median_notes}
+({unknown_race_q1_notes}-{unknown_race_q3_notes})"
+# Then filter for pain (y == 'X') and group
+unknown_race_pain_per_person = unknown_race_df[unknown_race_df['concept_code.y']
+== '10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+unknown_race_median_pain = unknown_race_pain_per_person.median()
+unknown_race_q1_pain = unknown_race_pain_per_person.quantile(0.25)
+unknown_race_q3_pain = unknown_race_pain_per_person.quantile(0.75)
+unknown_race_median_iqr_pain = f"{unknown_race_median_pain}
+({unknown_race_q1_pain}-{unknown_race_q3_pain})"
+### ETHNICITY
+#Hispanic or Latino
+hisp_notes = df_with_demo[df_with_demo['ethnicity'] == 'Hispanic or Latino']
+# hisp: Overall number of notes
+hisp_total_notes = (hisp_notes).nunique()
+# hisp: Per person number of notes (median and IQR)
+hisp_notes_per_person = hisp_notes.groupby('ptkey')['NOTE_ID'].nunique()
+hisp_median_notes = hisp_notes_per_person.median()
+hisp_q1_notes = hisp_notes_per_person.quantile(0.25)
+hisp_q3_notes = hisp_notes_per_person.quantile(0.75)
+hisp_median_iqr_notes = f"{hisp_median_notes} ({hisp_q1_notes}-{hisp_q3_notes})"
+# hisp: Pain mentions (overall)
+hisp_pain_mentions_overall = hisp_notes[hisp_notes['concept_code.y'] ==
+'10033371'].nunique()
+# hisp: Pain mentions (per person - median and IQR)
+hisp_pain_per_person = hisp_notes[hisp_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+hisp_median_pain = hisp_pain_per_person.median()
+hisp_q1_pain = hisp_pain_per_person.quantile(0.25)
+hisp_q3_pain = hisp_pain_per_person.quantile(0.75)
+hisp_median_iqr_pain = f"{hisp_median_pain} ({hisp_q1_pain}-{hisp_q3_pain})"
+### NOT HISPANIC LATINO
+no_hisp_notes = df_with_demo[df_with_demo['ethnicity'] == 'Not Hispanic or Latino']
+# no_hisp: Overall number of notes
+no_hisp_total_notes = (no_hisp_notes).nunique().fillna(0)
+# no_hisp: Per person number of notes (median and IQR)
+no_hisp_notes_per_person = no_hisp_notes.groupby('ptkey')['NOTE_ID'].nunique()
+no_hisp_median_notes = no_hisp_notes_per_person.median()
+no_hisp_q1_notes = no_hisp_notes_per_person.quantile(0.25)
+no_hisp_q3_notes = no_hisp_notes_per_person.quantile(0.75)
+no_hisp_median_iqr_notes = f"{no_hisp_median_notes} ({no_hisp_q1_notes}-
+{no_hisp_q3_notes})"
+# no_hisp: Pain mentions (overall)
+no_hisp_pain_mentions_overall = no_hisp_notes[no_hisp_notes['concept_code.y'] ==
+'10033371'].nunique()
+# no_hisp: Pain mentions (per person - median and IQR)
+no_hisp_pain_per_person = no_hisp_notes[no_hisp_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+no_hisp_median_pain = no_hisp_pain_per_person.median()
+no_hisp_q1_pain = no_hisp_pain_per_person.quantile(0.25)
+no_hisp_q3_pain = no_hisp_pain_per_person.quantile(0.75)
+no_hisp_median_iqr_pain = f"{no_hisp_median_pain} ({no_hisp_q1_pain}-
+{no_hisp_q3_pain})"
+## UNKNOWN ETHNICITY
+is_unknown_ethnicity = (
+(df_with_demo['ethnicity'].isna()) | # Catch NaN
+(df_with_demo['ethnicity'].str.contains('Unknown', case=False, na=False)) |
+(df_with_demo['ethnicity'].str.contains('Declined', case=False, na=False)) |
+(df_with_demo['ethnicity'].str.contains('Unknown/Declined', case=False, na=False))
+)
+unknown_ethnicity_notes = df_with_demo[is_unknown_ethnicity]
+unknown_ethnicity_total_notes = (unknown_ethnicity_notes).nunique().fillna(0)
+# unknown_ethnicity: Per person number of notes (median and IQR)
+unknown_ethnicity_notes_per_person =
+unknown_ethnicity_notes.groupby('ptkey')['NOTE_ID'].nunique()
+unknown_ethnicity_median_notes = unknown_ethnicity_notes_per_person.median()
+unknown_ethnicity_q1_notes = unknown_ethnicity_notes_per_person.quantile(0.25)
+unknown_ethnicity_q3_notes = unknown_ethnicity_notes_per_person.quantile(0.75)
+unknown_ethnicity_median_iqr_notes = f"{unknown_ethnicity_median_notes}
+({unknown_ethnicity_q1_notes}-{unknown_ethnicity_q3_notes})"
+# unknown_ethnicity: Pain mentions (overall)
+unknown_ethnicity_pain_mentions_overall =
+unknown_ethnicity_notes[unknown_ethnicity_notes['concept_code.y'] ==
+'10033371'].nunique()
+# unknown_ethnicity: Pain mentions (per person - median and IQR)
+unknown_ethnicity_pain_per_person =
+unknown_ethnicity_notes[unknown_ethnicity_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+unknown_ethnicity_median_pain = unknown_ethnicity_pain_per_person.median()
+unknown_ethnicity_q1_pain = unknown_ethnicity_pain_per_person.quantile(0.25)
+unknown_ethnicity_q3_pain = unknown_ethnicity_pain_per_person.quantile(0.75)
+unknown_ethnicity_median_iqr_pain = f"{unknown_ethnicity_median_pain}
+({unknown_ethnicity_q1_pain}-{unknown_ethnicity_q3_pain})"
+### INSURANCE
+#PRIVATE
+private_notes = df_with_demo[df_with_demo['Insur_grouped'] == 'Private']
+# private: Overall number of notes
+private_total_notes = (private_notes).nunique()
+# private: Per person number of notes (median and IQR)
+private_notes_per_person = private_notes.groupby('ptkey')['NOTE_ID'].nunique()
+private_median_notes = private_notes_per_person.median()
+private_q1_notes = private_notes_per_person.quantile(0.25)
+private_q3_notes = private_notes_per_person.quantile(0.75)
+private_median_iqr_notes = f"{private_median_notes} ({private_q1_notes}-
+{private_q3_notes})"
+# private: Pain mentions (overall)
+private_pain_mentions_overall = private_notes[private_notes['concept_code.y'] ==
+'10033371'].nunique()
+# private: Pain mentions (per person - median and IQR)
+private_pain_per_person = private_notes[private_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+private_median_pain = private_pain_per_person.median()
+private_q1_pain = private_pain_per_person.quantile(0.25)
+private_q3_pain = private_pain_per_person.quantile(0.75)
+private_median_iqr_pain = f"{private_median_pain} ({private_q1_pain}-{private_q3_pain})"
+### MEDICAID
+medicaid_notes = df_with_demo[df_with_demo['Insur_grouped'] == 'Medicaid']
+# medicaid: Overall number of notes
+medicaid_total_notes = (medicaid_notes).nunique()
+# medicaid: Per person number of notes (median and IQR)
+medicaid_notes_per_person = medicaid_notes.groupby('ptkey')['NOTE_ID'].nunique()
+medicaid_median_notes = medicaid_notes_per_person.median()
+medicaid_q1_notes = medicaid_notes_per_person.quantile(0.25)
+medicaid_q3_notes = medicaid_notes_per_person.quantile(0.75)
+medicaid_median_iqr_notes = f"{medicaid_median_notes} ({medicaid_q1_notes}-
+{medicaid_q3_notes})"
+# medicaid: Pain mentions (overall)
+medicaid_pain_mentions_overall = medicaid_notes[medicaid_notes['concept_code.y'] ==
+'10033371'].nunique()
+# medicaid: Pain mentions (per person - median and IQR)
+medicaid_pain_per_person = medicaid_notes[medicaid_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+medicaid_median_pain = medicaid_pain_per_person.median()
+medicaid_q1_pain = medicaid_pain_per_person.quantile(0.25)
+medicaid_q3_pain = medicaid_pain_per_person.quantile(0.75)
+medicaid_median_iqr_pain = f"{medicaid_median_pain} ({medicaid_q1_pain}-
+{medicaid_q3_pain})"
+#MEDICARE
+medicare_notes = df_with_demo[df_with_demo['Insur_grouped'] == 'Medicare']
+# medicare: Overall number of notes
+medicare_total_notes = (medicare_notes).nunique()
+# medicare: Per person number of notes (median and IQR)
+medicare_notes_per_person = medicare_notes.groupby('ptkey')['NOTE_ID'].nunique()
+medicare_median_notes = medicare_notes_per_person.median()
+medicare_q1_notes = medicare_notes_per_person.quantile(0.25)
+medicare_q3_notes = medicare_notes_per_person.quantile(0.75)
+medicare_median_iqr_notes = f"{medicare_median_notes} ({medicare_q1_notes}-
+{medicare_q3_notes})"
+# medicare: Pain mentions (overall)
+medicare_pain_mentions_overall = medicare_notes[medicare_notes['concept_code.y'] ==
+'10033371'].nunique()
+# medicare: Pain mentions (per person - median and IQR)
+medicare_pain_per_person = medicare_notes[medicare_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+medicare_median_pain = medicare_pain_per_person.median()
+medicare_q1_pain = medicare_pain_per_person.quantile(0.25)
+medicare_q3_pain = medicare_pain_per_person.quantile(0.75)
+medicare_median_iqr_pain = f"{medicare_median_pain} ({medicare_q1_pain}-
+{medicare_q3_pain})"
+#UNINSURED
+uninsured_notes = df_with_demo[df_with_demo['Insur_grouped'] == 'Uninsured or selfpay']
+# uninsured: Overall number of notes
+uninsured_total_notes = (uninsured_notes).nunique()
+# uninsured Per person number of notes (median and IQR)
+uninsured_notes_per_person = uninsured_notes.groupby('ptkey')['NOTE_ID'].nunique()
+uninsured_median_notes = uninsured_notes_per_person.median()
+uninsured_q1_notes = uninsured_notes_per_person.quantile(0.25)
+uninsured_q3_notes = uninsured_notes_per_person.quantile(0.75)
+uninsured_median_iqr_notes = f"{uninsured_median_notes} ({uninsured_q1_notes}-
+{uninsured_q3_notes})"
+# unisured: Pain mentions (overall)
+uninsured_pain_mentions_overall = uninsured_notes[uninsured_notes['concept_code.y']
+== '10033371'].nunique()
+# medicare: Pain mentions (per person - median and IQR)
+uninsured_pain_per_person = uninsured_notes[uninsured_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+uninsured_median_pain = uninsured_pain_per_person.median()
+uninsured_q1_pain = uninsured_pain_per_person.quantile(0.25)
+uninsured_q3_pain = uninsured_pain_per_person.quantile(0.75)
+uninsured_median_iqr_pain = f"{uninsured_median_pain} ({uninsured_q1_pain}-
+{uninsured_q3_pain})"
+# OTHER INSURANCE
+other_insur_notes = df_with_demo[df_with_demo['Insur_grouped'] == 'Other']
+# Overall number of UNIQUE notes
+other_insur_total_notes = other_insur_notes['NOTE_ID'].nunique()
+# Per person number of UNIQUE notes (median and IQR)
+other_insur_notes_per_person = other_insur_notes.groupby('ptkey')['NOTE_ID'].nunique()
+# Changed
+other_insur_median_notes = other_insur_notes_per_person.median()
+other_insur_q1_notes = other_insur_notes_per_person.quantile(0.25)
+other_insur_q3_notes = other_insur_notes_per_person.quantile(0.75)
+other_insur_median_iqr_notes = f"{other_insur_median_notes} ({other_insur_q1_notes}-
+{other_insur_q3_notes})"
+# Pain mentions (overall - unique notes with pain)
+other_insur_pain_mentions_overall =
+other_insur_notes[other_insur_notes['concept_code.y'] ==
+'10033371']['NOTE_ID'].nunique() # Changed
+# Pain mentions (per person - UNIQUE notes with pain, median and IQR)
+other_insur_pain_per_person = (
+other_insur_notes[other_insur_notes['concept_code.y'] == '10033371']
+.groupby('ptkey')['NOTE_ID']
+.nunique() #changed
+)
+other_insur_median_pain = other_insur_pain_per_person.median()
+other_insur_q1_pain = other_insur_pain_per_person.quantile(0.25)
+other_insur_q3_pain = other_insur_pain_per_person.quantile(0.75)
+other_insur_median_iqr_pain = f"{other_insur_median_pain} ({other_insur_q1_pain}-
+{other_insur_q3_pain})"
+### MARITAL STATUS
+is_partnered = (
+(df_with_demo['maritalstatus'] == 'Married') |
+(df_with_demo['maritalstatus'].str.contains('Significant Other', case=False, na=False) |
+(df_with_demo['maritalstatus'].str.contains('Registered Domestic Partner', case=False,
+na=False)
+)))
+partnered_notes = df_with_demo[is_partnered]
+# PARTNERED: Overall number of notes
+partnered_total_notes = (partnered_notes).nunique()
+# PARTNERED: Per person number of notes (median and IQR)
+partnered_notes_per_person = partnered_notes.groupby('ptkey')['NOTE_ID'].nunique()
+partnered_median_notes = partnered_notes_per_person.median()
+partnered_q1_notes = partnered_notes_per_person.quantile(0.25)
+partnered_q3_notes = partnered_notes_per_person.quantile(0.75)
+partnered_median_iqr_notes = f"{partnered_median_notes} ({partnered_q1_notes}-
+{partnered_q3_notes})"
+# PARTNERED: Pain mentions (overall)
+partnered_pain_mentions_overall = partnered_notes[partnered_notes['concept_code.y']
+== '10033371'].nunique()
+# PARTNERED: Pain mentions (per person - median and IQR)
+partnered_pain_per_person = partnered_notes[partnered_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+partnered_median_pain = partnered_pain_per_person.median()
+partnered_q1_pain = partnered_pain_per_person.quantile(0.25)
+partnered_q3_pain = partnered_pain_per_person.quantile(0.75)
+partnered_median_iqr_pain = f"{partnered_median_pain} ({partnered_q1_pain}-
+{partnered_q3_pain})"
+## SINGLE
+is_single = (
+(df_with_demo['maritalstatus'] == 'Single') |
+(df_with_demo['maritalstatus'].str.contains('Divorced', case=False, na=False) |
+(df_with_demo['maritalstatus'].str.contains('RDP-Dissolved', case=False, na=False) |
+(df_with_demo['maritalstatus'].str.contains('Legally Separated', case=False, na=False) |
+(df_with_demo['maritalstatus'].str.contains('Widowed', case=False, na=False) |
+(df_with_demo['maritalstatus'].str.contains('RDP-Widowed', case=False, na=False)
+))))))
+single_notes = df_with_demo[is_single]
+# SINGLE: Overall number of notes
+single_total_notes = (single_notes).nunique()
+# SINGLE: Per person number of notes (median and IQR)
+single_notes_per_person = single_notes.groupby('ptkey')['NOTE_ID'].nunique()
+single_median_notes = single_notes_per_person.median()
+single_q1_notes = single_notes_per_person.quantile(0.25)
+single_q3_notes = single_notes_per_person.quantile(0.75)
+single_median_iqr_notes = f"{single_median_notes} ({single_q1_notes}-{single_q3_notes})"
+# SINGLE: Pain mentions (overall)
+single_pain_mentions_overall = single_notes[single_notes['concept_code.y'] ==
+'10033371'].nunique()
+# SINGLE: Pain mentions (per person - median and IQR)
+single_pain_per_person = single_notes[single_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+single_median_pain = single_pain_per_person.median()
+single_q1_pain = single_pain_per_person.quantile(0.25)
+single_q3_pain = single_pain_per_person.quantile(0.75)
+single_median_iqr_pain = f"{single_median_pain} ({single_q1_pain}-{single_q3_pain})"
+is_unknown_marital= (
+(df_with_demo['maritalstatus'] == 'Unknown/Declined') |
+(df_with_demo['maritalstatus'].isna()
+))
+unknown_marital_notes = df_with_demo[is_unknown_marital]
+# unknown: Overall number of notes
+unknown_marital_total_notes = (unknown_marital_notes).nunique()
+# unknown: Per person number of notes (median and IQR)
+unknown_marital_notes_per_person =
+unknown_marital_notes.groupby('ptkey')['NOTE_ID'].nunique()
+unknown_marital_median_notes = unknown_marital_notes_per_person.median()
+unknown_marital_q1_notes = unknown_marital_notes_per_person.quantile(0.25)
+unknown_marital_q3_notes = unknown_marital_notes_per_person.quantile(0.75)
+unknown_marital_median_iqr_notes = f"{unknown_marital_median_notes}
+({unknown_marital_q1_notes}-{unknown_marital_q3_notes})"
+# unknown: Pain mentions (overall)
+unknown_marital_pain_mentions_overall =
+unknown_marital_notes[unknown_marital_notes['concept_code.y'] ==
+'10033371'].nunique()
+# unknown: Pain mentions (per person - median and IQR)
+unknown_marital_pain_per_person =
+unknown_marital_notes[unknown_marital_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+unknown_marital_median_pain = unknown_marital_pain_per_person.median()
+unknown_marital_q1_pain = unknown_marital_pain_per_person.quantile(0.25)
+unknown_marital_q3_pain = unknown_marital_pain_per_person.quantile(0.75)
+unknown_marital_median_iqr_pain = f"{unknown_marital_median_pain}
+({unknown_marital_q1_pain}-{unknown_marital_q3_pain})"
+## PRIMARY CANCER
+#PROSTATE
+prostate_notes = df_with_demo[df_with_demo['Prostate'] == 1]
+# prostate: Overall number of notes
+prostate_total_notes = (prostate_notes).nunique()
+# prostate: Per person number of notes (median and IQR)
+prostate_notes_per_person = prostate_notes.groupby('ptkey')['NOTE_ID'].nunique()
+prostate_median_notes = prostate_notes_per_person.median()
+prostate_q1_notes = prostate_notes_per_person.quantile(0.25)
+prostate_q3_notes = prostate_notes_per_person.quantile(0.75)
+prostate_median_iqr_notes = f"{prostate_median_notes} ({prostate_q1_notes}-
+{prostate_q3_notes})"
+# prostate: Pain mentions (overall)
+prostate_pain_mentions_overall = prostate_notes[prostate_notes['concept_code.y'] ==
+'10033371'].nunique()
+# prostate: Pain mentions (per person - median and IQR)
+prostate_pain_per_person = prostate_notes[prostate_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+prostate_median_pain = prostate_pain_per_person.median()
+prostate_q1_pain = prostate_pain_per_person.quantile(0.25)
+prostate_q3_pain = prostate_pain_per_person.quantile(0.75)
+prostate_median_iqr_pain = f"{prostate_median_pain} ({prostate_q1_pain}-
+{prostate_q3_pain})"
+### Breast
+breast_notes = df_with_demo[df_with_demo['Breast'] == 1]
+# breast: Overall number of notes
+breast_total_notes = breast_notes['NOTE_ID'].nunique()
+# breast: Per person number of notes (median and IQR)
+breast_notes_per_person = breast_notes.groupby('ptkey')['NOTE_ID'].nunique()
+breast_median_notes = breast_notes_per_person.median()
+breast_q1_notes = breast_notes_per_person.quantile(0.25)
+breast_q3_notes = breast_notes_per_person.quantile(0.75)
+breast_median_iqr_notes = f"{breast_median_notes} ({breast_q1_notes}-
+{breast_q3_notes})"
+# breast: Pain mentions (overall)
+breast_pain_mentions_overall = breast_notes[breast_notes['concept_code.y'] ==
+'10033371'].nunique()
+# breast: Pain mentions (per person - median and IQR)
+breast_pain_per_person = breast_notes[breast_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+breast_median_pain = breast_pain_per_person.median()
+breast_q1_pain = breast_pain_per_person.quantile(0.25)
+breast_q3_pain = breast_pain_per_person.quantile(0.75)
+breast_median_iqr_pain = f"{breast_median_pain} ({breast_q1_pain}-{breast_q3_pain})"
+#LUNG
+lung_notes = df_with_demo[df_with_demo['Lung'] == 1]
+# lung: Overall number of notes
+lung_total_notes = (lung_notes['NOTE_ID']).nunique()
+# lung: Per person number of notes (median and IQR)
+lung_notes_per_person = lung_notes.groupby('ptkey')['NOTE_ID'].nunique()
+lung_median_notes = lung_notes_per_person.median()
+lung_q1_notes = lung_notes_per_person.quantile(0.25)
+lung_q3_notes = lung_notes_per_person.quantile(0.75)
+lung_median_iqr_notes = f"{lung_median_notes} ({lung_q1_notes}-{lung_q3_notes})"
+# lung: Pain mentions (overall)
+lung_pain_mentions_overall = lung_notes[lung_notes['concept_code.y'] ==
+'10033371'].nunique()
+# lung: Pain mentions (per person - median and IQR)
+lung_pain_per_person = lung_notes[lung_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+lung_median_pain = lung_pain_per_person.median()
+lung_q1_pain = lung_pain_per_person.quantile(0.25)
+lung_q3_pain = lung_pain_per_person.quantile(0.75)
+lung_median_iqr_pain = f"{lung_median_pain} ({lung_q1_pain}-{lung_q3_pain})"
+#SARCOMA AND SOFT TISSUE
+sarcoma_notes = df_with_demo[df_with_demo['Bone.soft.tissue.and.sarcoma'] == 1]
+# sarcoma: Overall number of notes
+sarcoma_total_notes = sarcoma_notes['NOTE_ID'].nunique()
+# sarcoma: Per person number of notes (median and IQR)
+sarcoma_notes_per_person = sarcoma_notes.groupby('ptkey')['NOTE_ID'].nunique()
+sarcoma_median_notes = sarcoma_notes_per_person.median()
+sarcoma_q1_notes = sarcoma_notes_per_person.quantile(0.25)
+sarcoma_q3_notes = sarcoma_notes_per_person.quantile(0.75)
+sarcoma_median_iqr_notes = f"{sarcoma_median_notes} ({sarcoma_q1_notes}-
+{sarcoma_q3_notes})"
+# sarcoma: Pain mentions (overall)
+sarcoma_pain_mentions_overall = sarcoma_notes[sarcoma_notes['concept_code.y'] ==
+'10033371'].nunique()
+# sarcoma: Pain mentions (per person - median and IQR)
+sarcoma_pain_per_person = sarcoma_notes[sarcoma_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+sarcoma_median_pain = sarcoma_pain_per_person.median()
+sarcoma_q1_pain = sarcoma_pain_per_person.quantile(0.25)
+sarcoma_q3_pain = sarcoma_pain_per_person.quantile(0.75)
+sarcoma_median_iqr_pain = f"{sarcoma_median_pain} ({sarcoma_q1_pain}-
+{sarcoma_q3_pain})"
+#HEMATOLOGIC
+hematologic_notes = df_with_demo[df_with_demo['Hematologic'] == 1]
+# hematologic: Overall number of notes
+hematologic_total_notes = hematologic_notes['NOTE_ID'].nunique()
+# hematologic: Per person number of notes (median and IQR)
+hematologic_notes_per_person =
+hematologic_notes.groupby('ptkey')['NOTE_ID'].nunique()
+hematologic_median_notes = hematologic_notes_per_person.median()
+hematologic_q1_notes = hematologic_notes_per_person.quantile(0.25)
+hematologic_q3_notes = hematologic_notes_per_person.quantile(0.75)
+hematologic_median_iqr_notes = f"{hematologic_median_notes}
+({hematologic_q1_notes}-{hematologic_q3_notes})"
+# hematologic: Pain mentions (overall)
+hematologic_pain_mentions_overall =
+hematologic_notes[hematologic_notes['concept_code.y'] == '10033371'].nunique()
+# hematologic: Pain mentions (per person - median and IQR)
+hematologic_pain_per_person = hematologic_notes[hematologic_notes['concept_code.y']
+== '10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+hematologic_median_pain = hematologic_pain_per_person.median()
+hematologic_q1_pain = hematologic_pain_per_person.quantile(0.25)
+hematologic_q3_pain = hematologic_pain_per_person.quantile(0.75)
+hematologic_median_iqr_pain = f"{hematologic_median_pain} ({hematologic_q1_pain}-
+{hematologic_q3_pain})"
+#OTHER CANCERS
+others_columns = ['Bladder.and.ureter', 'CNS', 'Colorectal', 'GI.other', 'Gynecologic',
+'Head.and.neck', 'Kidney.and.renal.pelvis', 'Liver.and.bile.duct', 'Melanoma',
+'Metastatic', 'Other', 'Pancreatic', 'Skin.other']
+# Filter for notes that have a 1 any of the other columns
+other_cancer_notes = df_with_demo[df_with_demo[others_columns].sum(axis=1) > 0]
+# Count total unique notes
+other_total_notes = other_cancer_notes['NOTE_ID'].nunique()
+# other_cancer: Per person number of notes (median and IQR)
+other_cancer_notes_per_person =
+other_cancer_notes.groupby('ptkey')['NOTE_ID'].nunique()
+other_cancer_median_notes = other_cancer_notes_per_person.median()
+other_cancer_q1_notes = other_cancer_notes_per_person.quantile(0.25)
+other_cancer_q3_notes = other_cancer_notes_per_person.quantile(0.75)
+other_cancer_median_iqr_notes = f"{other_cancer_median_notes}
+({other_cancer_q1_notes}-{other_cancer_q3_notes})"
+# other_cancer: Pain mentions (overall)
+other_cancer_pain_mentions_overall =
+other_cancer_notes[other_cancer_notes['concept_code.y'] == '10033371'].nunique()
+# other_cancer: Pain mentions (per person - median and IQR)
+other_cancer_pain_per_person =
+other_cancer_notes[other_cancer_notes['concept_code.y'] ==
+'10033371'].groupby('ptkey')['NOTE_ID'].nunique()
+other_cancer_median_pain = other_cancer_pain_per_person.median()
+other_cancer_q1_pain = other_cancer_pain_per_person.quantile(0.25)
+other_cancer_q3_pain = other_cancer_pain_per_person.quantile(0.75)
+other_cancer_median_iqr_pain = f"{other_cancer_median_pain} ({other_cancer_q1_pain}-
+{other_cancer_q3_pain})"
+daysdir_df = pd.read_csv('Symptoms_dxRT_dx_8.9.23.csv')
+if 'dir_days_sxdx' in df_with_demo.columns:
+df_with_demo = df_with_demo.drop(columns=['dir_days_sxdx'])
+df_with_demo_daysdir = df_with_demo.merge(
+daysdir_df[['ptkey', 'dir_days_sxdx']],
+on='ptkey',
+how='left'
+)
+df_with_demo_daysdir['dir_days_sxdx'] =
+pd.to_numeric(df_with_demo_daysdir['dir_days_sxdx'], errors='coerce')
+print(df_with_demo_daysdir.columns.tolist())
+female_notes = df_with_demo_daysdir[df_with_demo_daysdir['sex'] == 'Female']
+male_notes = df_with_demo_daysdir[df_with_demo_daysdir['sex'] == 'Male']
+# Overall (by note)
+#AT bottom
+# Overall (by person)
+daysdir_per_person = df_with_demo_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+median_daysdir = daysdir_per_person.median()
+q1_daysdir = daysdir_per_person.quantile(0.25)
+q3_daysdir = daysdir_per_person.quantile(0.75)
+daysdir_overall_person = f"{median_daysdir:.2f} ({q1_daysdir:.2f}-{q3_daysdir:.2f})"
+# Female
+female_notes_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['sex'] == 'Female']
+female_daysdir_per_person =
+female_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+female_median_daysdir = female_daysdir_per_person.median()
+female_q1_daysdir = female_daysdir_per_person.quantile(0.25)
+female_q3_daysdir = female_daysdir_per_person.quantile(0.75)
+daysdir_female = f"{female_median_daysdir:.2f} ({female_q1_daysdir:.2f}-
+{female_q3_daysdir:.2f})"
+# Male
+male_notes_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['sex'] == 'Male']
+male_daysdir_per_person =
+male_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+male_median_daysdir = male_daysdir_per_person.median()
+male_q1_daysdir = male_daysdir_per_person.quantile(0.25)
+male_q3_daysdir = male_daysdir_per_person.quantile(0.75)
+daysdir_male = f"{male_median_daysdir:.2f} ({male_q1_daysdir:.2f}-
+{male_q3_daysdir:.2f})"
+# Unknown Sex
+unknown_notes_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['sex'] ==
+'Unknown']
+unknown_daysdir_per_person =
+unknown_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+unknown_median_daysdir = unknown_daysdir_per_person.median()
+unknown_q1_daysdir = unknown_daysdir_per_person.quantile(0.25)
+unknown_q3_daysdir = unknown_daysdir_per_person.quantile(0.75)
+daysdir_unknown_sex = f"{unknown_median_daysdir:.2f} ({unknown_q1_daysdir:.2f}-
+{unknown_q3_daysdir:.2f})"
+# English
+english_notes_daysdir =
+df_with_demo_daysdir[df_with_demo_daysdir['preferredlanguage'] == 'English']
+english_daysdir_per_person =
+english_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+english_median_daysdir = english_daysdir_per_person.median()
+english_q1_daysdir = english_daysdir_per_person.quantile(0.25)
+english_q3_daysdir = english_daysdir_per_person.quantile(0.75)
+daysdir_english = f"{english_median_daysdir:.2f} ({english_q1_daysdir:.2f}-
+{english_q3_daysdir:.2f})"
+# Chinese
+chinese_notes_daysdir =
+df_with_demo_daysdir[df_with_demo_daysdir['preferredlanguage'].str.contains('Chinese',
+na=False)]
+chinese_daysdir_per_person =
+chinese_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+chinese_median_daysdir = chinese_daysdir_per_person.median()
+chinese_q1_daysdir = chinese_daysdir_per_person.quantile(0.25)
+chinese_q3_daysdir = chinese_daysdir_per_person.quantile(0.75)
+daysdir_chinese = f"{chinese_median_daysdir:.2f} ({chinese_q1_daysdir:.2f}-
+{chinese_q3_daysdir:.2f})"
+# Spanish
+spanish_notes_daysdir =
+df_with_demo_daysdir[df_with_demo_daysdir['preferredlanguage'] == 'Spanish']
+spanish_daysdir_per_person =
+spanish_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+spanish_median_daysdir = spanish_daysdir_per_person.median()
+spanish_q1_daysdir = spanish_daysdir_per_person.quantile(0.25)
+spanish_q3_daysdir = spanish_daysdir_per_person.quantile(0.75)
+daysdir_spanish = f"{spanish_median_daysdir:.2f} ({spanish_q1_daysdir:.2f}-
+{spanish_q3_daysdir:.2f})"
+# Russian
+russian_notes_daysdir =
+df_with_demo_daysdir[df_with_demo_daysdir['preferredlanguage'] == 'Russian']
+russian_daysdir_per_person =
+russian_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+russian_median_daysdir = russian_daysdir_per_person.median()
+russian_q1_daysdir = russian_daysdir_per_person.quantile(0.25)
+russian_q3_daysdir = russian_daysdir_per_person.quantile(0.75)
+daysdir_russian = f"{russian_median_daysdir:.2f} ({russian_q1_daysdir:.2f}-
+{russian_q3_daysdir:.2f})"
+# Other Language
+exclude_languages = ['Spanish', 'Russian', 'English', 'Unknown/Declined','*Unspecified']
+is_other_language = (
+(~df_with_demo_daysdir['preferredlanguage'].isin(exclude_languages)) &
+(~df_with_demo_daysdir['preferredlanguage'].str.contains('Chinese', case=False,
+na=False))
+)
+other_lang_notes_daysdir = df_with_demo_daysdir[is_other_language]
+other_lang_daysdir_per_person =
+other_lang_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+other_lang_median_daysdir = other_lang_daysdir_per_person.median()
+other_lang_q1_daysdir = other_lang_daysdir_per_person.quantile(0.25)
+other_lang_q3_daysdir = other_lang_daysdir_per_person.quantile(0.75)
+daysdir_other_lang = f"{other_lang_median_daysdir:.2f} ({other_lang_q1_daysdir:.2f}-
+{other_lang_q3_daysdir:.2f})"
+# Unknown Language
+is_unknown_language = (
+(df_with_demo_daysdir['preferredlanguage'] == 'Unknown/Declined') |
+(df_with_demo_daysdir['preferredlanguage'].str.contains('Unspecified', case=False,
+na=False)))
+unknown_lang_daysdir = df_with_demo_daysdir[is_unknown_language]
+unknown_lang_daysdir_per_person =
+unknown_lang_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+unknown_lang_median_daysdir = unknown_lang_daysdir_per_person.median()
+unknown_lang_q1_daysdir = unknown_lang_daysdir_per_person.quantile(0.25)
+unknown_lang_q3_daysdir = unknown_lang_daysdir_per_person.quantile(0.75)
+daysdir_unknown_lang = f"{unknown_lang_median_daysdir:.2f}
+({unknown_lang_q1_daysdir:.2f}-{unknown_lang_q3_daysdir:.2f})"
+# White
+white_notes_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Race_formatted']
+== 'White']
+white_daysdir_per_person =
+white_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+white_median_daysdir = white_daysdir_per_person.median()
+white_q1_daysdir = white_daysdir_per_person.quantile(0.25)
+white_q3_daysdir = white_daysdir_per_person.quantile(0.75)
+daysdir_white = f"{white_median_daysdir:.2f} ({white_q1_daysdir:.2f}-
+{white_q3_daysdir:.2f})"
+# Asian
+asian_notes_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Race_formatted']
+== 'Asian']
+asian_daysdir_per_person =
+asian_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+asian_median_daysdir = asian_daysdir_per_person.median()
+asian_q1_daysdir = asian_daysdir_per_person.quantile(0.25)
+asian_q3_daysdir = asian_daysdir_per_person.quantile(0.75)
+daysdir_asian = f"{asian_median_daysdir:.2f} ({asian_q1_daysdir:.2f}-
+{asian_q3_daysdir:.2f})"
+# Black or African American
+black_notes_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Race_formatted']
+== 'Black or African American']
+black_daysdir_per_person =
+black_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+black_median_daysdir = black_daysdir_per_person.median()
+black_q1_daysdir = black_daysdir_per_person.quantile(0.25)
+black_q3_daysdir = black_daysdir_per_person.quantile(0.75)
+daysdir_black = f"{black_median_daysdir:.2f} ({black_q1_daysdir:.2f}-
+{black_q3_daysdir:.2f})"
+# Other or Multiracial
+other_race_notes_daysdir =
+df_with_demo_daysdir[df_with_demo_daysdir['Race_formatted'] == 'Other']
+other_race_daysdir_per_person =
+other_race_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+other_race_median_daysdir = other_race_daysdir_per_person.median()
+other_race_q1_daysdir = other_race_daysdir_per_person.quantile(0.25)
+other_race_q3_daysdir = other_race_daysdir_per_person.quantile(0.75)
+daysdir_other_race = f"{other_race_median_daysdir:.2f} ({other_race_q1_daysdir:.2f}-
+{other_race_q3_daysdir:.2f})"
+# Unknown Race
+unknown_race_notes_daysdir =
+df_with_demo_daysdir[df_with_demo_daysdir['Race_formatted'] == 'Unknown']
+unknown_race_daysdir_per_person =
+unknown_race_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+unknown_race_median_daysdir = unknown_race_daysdir_per_person.median()
+unknown_race_q1_daysdir = unknown_race_daysdir_per_person.quantile(0.25)
+unknown_race_q3_daysdir = unknown_race_daysdir_per_person.quantile(0.75)
+daysdir_unknown_race = f"{unknown_race_median_daysdir:.2f}
+({unknown_race_q1_daysdir:.2f}-{unknown_race_q3_daysdir:.2f})"
+# Ethnicity
+# Hispanic or Latino
+hisp_notes_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['ethnicity'] ==
+'Hispanic or Latino']
+hisp_daysdir_per_person =
+hisp_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+hisp_median_daysdir = hisp_daysdir_per_person.median()
+hisp_q1_daysdir = hisp_daysdir_per_person.quantile(0.25)
+hisp_q3_daysdir = hisp_daysdir_per_person.quantile(0.75)
+daysdir_hisp = f"{hisp_median_daysdir:.2f} ({hisp_q1_daysdir:.2f}-{hisp_q3_daysdir:.2f})"
+# Not Hispanic or Latino
+no_hisp_notes_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['ethnicity'] ==
+'Not Hispanic or Latino']
+no_hisp_daysdir_per_person =
+no_hisp_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+no_hisp_median_daysdir = no_hisp_daysdir_per_person.median()
+no_hisp_q1_daysdir = no_hisp_daysdir_per_person.quantile(0.25)
+no_hisp_q3_daysdir = no_hisp_daysdir_per_person.quantile(0.75)
+daysdir_no_hisp = f"{no_hisp_median_daysdir:.2f} ({no_hisp_q1_daysdir:.2f}-
+{no_hisp_q3_daysdir:.2f})"
+#Unknown
+is_unknown_ethnicity = (
+(df_with_demo_daysdir['ethnicity'].isna()) |
+(df_with_demo_daysdir['ethnicity'].str.contains('Unknown', case=False, na=False)) |
+(df_with_demo_daysdir['ethnicity'].str.contains('Declined', case=False, na=False)) |
+(df_with_demo_daysdir['ethnicity'].str.contains('Unknown/Declined', case=False,
+na=False))
+)
+unknown_ethnicity_notes_daysdir = df_with_demo_daysdir[is_unknown_ethnicity]
+unknown_ethnicity_daysdir_per_person =
+unknown_ethnicity_notes_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+unknown_ethnicity_median_daysdir = unknown_ethnicity_daysdir_per_person.median()
+unknown_ethnicity_q1_daysdir = unknown_ethnicity_daysdir_per_person.quantile(0.25)
+unknown_ethnicity_q3_daysdir = unknown_ethnicity_daysdir_per_person.quantile(0.75)
+daysdir_unknown_ethnicity = f"{unknown_ethnicity_median_daysdir:.2f}
+({unknown_ethnicity_q1_daysdir:.2f}-{unknown_ethnicity_q3_daysdir:.2f})"
+# Insurance
+# PRIVATE
+private_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Insur_grouped'] ==
+'Private']
+private_daysdir_per_person = private_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+private_median_daysdir = private_daysdir_per_person.median()
+private_q1_daysdir = private_daysdir_per_person.quantile(0.25)
+private_q3_daysdir = private_daysdir_per_person.quantile(0.75)
+daysdir_private = f"{private_median_daysdir:.2f} ({private_q1_daysdir:.2f}-
+{private_q3_daysdir:.2f})"
+#MEDICAID
+medicaid_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Insur_grouped'] ==
+'Medicaid']
+medicaid_daysdir_per_person =
+medicaid_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+medicaid_median_daysdir = medicaid_daysdir_per_person.median()
+medicaid_q1_daysdir = medicaid_daysdir_per_person.quantile(0.25)
+medicaid_q3_daysdir = medicaid_daysdir_per_person.quantile(0.75)
+daysdir_medicaid = f"{medicaid_median_daysdir:.2f} ({medicaid_q1_daysdir:.2f}-
+{medicaid_q3_daysdir:.2f})"
+#MEDICARE
+medicare_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Insur_grouped'] ==
+'Medicare']
+medicare_daysdir_per_person =
+medicare_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+medicare_median_daysdir = medicare_daysdir_per_person.median()
+medicare_q1_daysdir = medicare_daysdir_per_person.quantile(0.25)
+medicare_q3_daysdir = medicare_daysdir_per_person.quantile(0.75)
+daysdir_medicare = f"{medicare_median_daysdir:.2f} ({medicare_q1_daysdir:.2f}-
+{medicare_q3_daysdir:.2f})"
+#UNINSURED
+uninsured_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Insur_grouped'] ==
+'Uninsured or selfpay']
+uninsured_daysdir_per_person =
+uninsured_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+uninsured_median_daysdir = uninsured_daysdir_per_person.median()
+uninsured_q1_daysdir = uninsured_daysdir_per_person.quantile(0.25)
+uninsured_q3_daysdir = uninsured_daysdir_per_person.quantile(0.75)
+daysdir_uninsured = f"{uninsured_median_daysdir:.2f} ({uninsured_q1_daysdir:.2f}-
+{uninsured_q3_daysdir:.2f})"
+#OTHER INSURANCE
+other_insur_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Insur_grouped'] ==
+'Other']
+other_insur_daysdir_per_person =
+other_insur_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+other_insur_median_daysdir = other_insur_daysdir_per_person.median()
+other_insur_q1_daysdir = other_insur_daysdir_per_person.quantile(0.25)
+other_insur_q3_daysdir = other_insur_daysdir_per_person.quantile(0.75)
+daysdir_other_insur = f"{other_insur_median_daysdir:.2f} ({other_insur_q1_daysdir:.2f}-
+{other_insur_q3_daysdir:.2f})"
+# Marital Status
+## PARTNERED
+is_partnered = (
+(df_with_demo_daysdir['maritalstatus'] == 'Married') |
+(df_with_demo_daysdir['maritalstatus'].str.contains('Significant Other', case=False,
+na=False) |
+(df_with_demo_daysdir['maritalstatus'].str.contains('Registered Domestic Partner',
+case=False, na=False)
+)))
+partnered_daysdir = df_with_demo_daysdir[is_partnered]
+partnered_daysdir_per_person =
+partnered_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+partnered_median_daysdir = partnered_daysdir_per_person.median()
+partnered_q1_daysdir = partnered_daysdir_per_person.quantile(0.25)
+partnered_q3_daysdir = partnered_daysdir_per_person.quantile(0.75)
+daysdir_partnered = f"{partnered_median_daysdir:.2f} ({partnered_q1_daysdir:.2f}-
+{partnered_q3_daysdir:.2f})"
+## SINGLE
+is_single = (
+(df_with_demo_daysdir['maritalstatus'] == 'Single') |
+(df_with_demo_daysdir['maritalstatus'].str.contains('Divorced', case=False, na=False) |
+(df_with_demo_daysdir['maritalstatus'].str.contains('RDP-Dissolved', case=False,
+na=False) |
+(df_with_demo_daysdir['maritalstatus'].str.contains('Legally Separated', case=False,
+na=False) |
+(df_with_demo_daysdir['maritalstatus'].str.contains('Widowed', case=False, na=False) |
+(df_with_demo_daysdir['maritalstatus'].str.contains('RDP-Widowed', case=False,
+na=False)
+))))))
+single_daysdir = df_with_demo_daysdir[is_single]
+single_daysdir_per_person = single_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+single_median_daysdir = single_daysdir_per_person.median()
+single_q1_daysdir = single_daysdir_per_person.quantile(0.25)
+single_q3_daysdir = single_daysdir_per_person.quantile(0.75)
+daysdir_single = f"{single_median_daysdir:.2f} ({single_q1_daysdir:.2f}-
+{single_q3_daysdir:.2f})"
+## UNKNOWN
+is_unknown_marital= (
+(df_with_demo_daysdir['maritalstatus'] == 'Unknown/Declined') |
+(df_with_demo_daysdir['maritalstatus'].isna()
+))
+unknown_marital_daysdir = df_with_demo_daysdir[is_unknown_marital]
+unknown_marital_daysdir = df_with_demo_daysdir[is_unknown_marital]
+unknown_marital_daysdir_per_person =
+unknown_marital_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+unknown_marital_median_daysdir = unknown_marital_daysdir_per_person.median()
+unknown_marital_q1_daysdir = unknown_marital_daysdir_per_person.quantile(0.25)
+unknown_marital_q3_daysdir = unknown_marital_daysdir_per_person.quantile(0.75)
+daysdir_unknown_marital = f"{unknown_marital_median_daysdir:.2f}
+({unknown_marital_q1_daysdir:.2f}-{unknown_marital_q3_daysdir:.2f})"
+# PRIMARY CANCER
+#PROSTATE
+prostate_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Prostate'] == 1]
+prostate_daysdir_per_person =
+prostate_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+prostate_median_daysdir = prostate_daysdir_per_person.median()
+prostate_q1_daysdir = prostate_daysdir_per_person.quantile(0.25)
+prostate_q3_daysdir = prostate_daysdir_per_person.quantile(0.75)
+daysdir_prostate = f"{prostate_median_daysdir:.2f} ({prostate_q1_daysdir:.2f}-
+{prostate_q3_daysdir:.2f})"
+#LUNG
+lung_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Lung'] == 1]
+lung_daysdir_per_person = lung_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+lung_median_daysdir = lung_daysdir_per_person.median()
+lung_q1_daysdir = lung_daysdir_per_person.quantile(0.25)
+lung_q3_daysdir = lung_daysdir_per_person.quantile(0.75)
+daysdir_lung = f"{lung_median_daysdir:.2f} ({lung_q1_daysdir:.2f}-{lung_q3_daysdir:.2f})"
+#BREAST
+breast_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Breast'] == 1]
+breast_daysdir_per_person = breast_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+breast_median_daysdir = breast_daysdir_per_person.median()
+breast_q1_daysdir = breast_daysdir_per_person.quantile(0.25)
+breast_q3_daysdir = breast_daysdir_per_person.quantile(0.75)
+daysdir_breast = f"{breast_median_daysdir:.2f} ({breast_q1_daysdir:.2f}-
+{breast_q3_daysdir:.2f})"
+#BONE SOFT TISSUE AND SARCOMA
+bone_daysdir =
+df_with_demo_daysdir[df_with_demo_daysdir['Bone.soft.tissue.and.sarcoma'] == 1]
+bone_daysdir_per_person = bone_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+bone_median_daysdir = bone_daysdir_per_person.median()
+bone_q1_daysdir = bone_daysdir_per_person.quantile(0.25)
+bone_q3_daysdir = bone_daysdir_per_person.quantile(0.75)
+daysdir_bone = f"{bone_median_daysdir:.2f} ({bone_q1_daysdir:.2f}-
+{bone_q3_daysdir:.2f})"
+#HEMATOLOGIC
+hematologic_daysdir = df_with_demo_daysdir[df_with_demo_daysdir['Hematologic'] ==
+1]
+hematologic_daysdir_per_person =
+hematologic_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+hematologic_median_daysdir = hematologic_daysdir_per_person.median()
+hematologic_q1_daysdir = hematologic_daysdir_per_person.quantile(0.25)
+hematologic_q3_daysdir = hematologic_daysdir_per_person.quantile(0.75)
+daysdir_hematologic = f"{hematologic_median_daysdir:.2f}
+({hematologic_q1_daysdir:.2f}-{hematologic_q3_daysdir:.2f})"
+#OTHER
+others_columns = ['Bladder.and.ureter', 'CNS', 'Colorectal', 'GI.other', 'Gynecologic',
+'Head.and.neck', 'Kidney.and.renal.pelvis', 'Liver.and.bile.duct', 'Melanoma',
+'Metastatic', 'Other', 'Pancreatic', 'Skin.other']
+other_cancer_daysdir =
+df_with_demo_daysdir[df_with_demo_daysdir[others_columns].sum(axis=1) > 0]
+other_cancer_daysdir_per_person =
+other_cancer_daysdir.groupby('ptkey')['dir_days_sxdx'].median()
+other_cancer_median_daysdir = other_cancer_daysdir_per_person.median()
+other_cancer_q1_daysdir = other_cancer_daysdir_per_person.quantile(0.25)
+other_cancer_q3_daysdir = other_cancer_daysdir_per_person.quantile(0.75)
+daysdir_other_cancer = f"{other_cancer_median_daysdir:.2f}
+({other_cancer_q1_daysdir:.2f}-{other_cancer_q3_daysdir:.2f})"
+median_daysdir_overall = df_with_demo_daysdir['dir_days_sxdx'].median()
+q1_daysdir_overall = df_with_demo_daysdir['dir_days_sxdx'].quantile(0.25)
+q3_daysdir_overall = df_with_demo_daysdir['dir_days_sxdx'].quantile(0.75)
+daysdir_overall_note = f"{median_daysdir_overall:.2f} ({q1_daysdir_overall:.2f}-
+{q3_daysdir_overall:.2f})"
+# *********Table Here********
+pd.set_option('display.max_columns', None) # Display all columns
+pd.set_option('display.max_rows', None) # Display all rows
+pd.set_option('display.width', None)
+df_table = pd.DataFrame({
+'Documentation Density (# notes per 30 days)': [
+median_iqr_notes,
+female_median_iqr_notes,
+male_median_iqr_notes,
+unknown_median_iqr_notes,
+english_median_iqr_notes,
+Chinese_median_iqr_notes,
+spanish_median_iqr_notes,
+russian_median_iqr_notes,
+other_median_iqr_notes,
+unknown_lang_median_iqr_notes,
+white_median_iqr_notes,
+asian_median_iqr_notes,
+black_median_iqr_notes,
+other_race_median_iqr_notes,
+unknown_race_median_iqr_notes,
+hisp_median_iqr_notes,
+no_hisp_median_iqr_notes,
+unknown_ethnicity_median_iqr_notes,
+private_median_iqr_notes,
+medicaid_median_iqr_notes,
+medicare_median_iqr_notes,
+uninsured_median_iqr_notes,
+other_insur_median_iqr_notes,
+partnered_median_iqr_notes,
+single_median_iqr_notes,
+unknown_marital_median_iqr_notes,
+prostate_median_iqr_notes,
+breast_median_iqr_notes,
+lung_median_iqr_notes,
+sarcoma_median_iqr_notes,
+hematologic_median_iqr_notes,
+other_cancer_median_iqr_notes
+],
+'# of + pain mentions': [
+median_iqr_pain,
+female_median_iqr_pain,
+male_median_iqr_pain,
+unknown_median_iqr_pain,
+english_median_iqr_pain,
+Chinese_median_iqr_pain,
+spanish_median_iqr_pain,
+russian_median_iqr_pain,
+other_median_iqr_pain,
+unknown_lang_median_iqr_pain,
+white_median_iqr_pain,
+asian_median_iqr_pain,
+black_median_iqr_pain,
+other_race_median_iqr_pain,
+unknown_race_median_iqr_pain,
+hisp_median_iqr_pain,
+no_hisp_median_iqr_pain,
+unknown_ethnicity_median_iqr_pain,
+private_median_iqr_pain,
+medicaid_median_iqr_pain,
+medicare_median_iqr_pain,
+uninsured_median_iqr_pain,
+other_insur_median_iqr_pain,
+partnered_median_iqr_pain,
+single_median_iqr_pain,
+unknown_median_iqr_pain,
+prostate_median_iqr_pain,
+breast_median_iqr_pain,
+lung_median_iqr_pain,
+sarcoma_median_iqr_pain,
+hematologic_median_iqr_pain,
+other_cancer_median_iqr_pain
+],
+'# Dir Days': [
+daysdir_overall_person,
+daysdir_female,
+daysdir_male,
+daysdir_unknown_sex,
+daysdir_english,
+daysdir_chinese,
+daysdir_spanish,
+daysdir_russian,
+daysdir_other_lang,
+daysdir_unknown_lang,
+daysdir_white,
+daysdir_asian,
+daysdir_black,
+daysdir_other_race,
+daysdir_unknown_race,
+daysdir_hisp,
+daysdir_no_hisp,
+daysdir_unknown_ethnicity,
+daysdir_private,
+daysdir_medicaid,
+daysdir_medicare,
+daysdir_uninsured,
+daysdir_other_insur,
+daysdir_partnered,
+daysdir_single,
+daysdir_unknown_marital,
+daysdir_prostate,
+daysdir_breast,
+daysdir_lung,
+daysdir_bone,
+daysdir_hematologic,
+daysdir_other_cancer
+]
+}, index=[
+'Overall (by person)',
+'Female (by person)',
+'Male (by person)',
+'Unknown Gender (by person)',
+'English (by person)',
+'Chinese (by person)',
+'Spanish (by person)',
+'Russian (by person)',
+'Other Language (by person)',
+'Unknown Language (by person)',
+'White (by person)',
+'Asian (by person)',
+'Black or African American (per person)',
+'Other Race (by person)',
+'Unknown Race (by person)',
+'Hispanic or Latino Ethnicity (by person)',
+'Not Hispanic or Latino Ethnicity (by person)',
+'Unknown/Declined Ethnicity (by person)',
+'Private Insurance (by person)',
+'Medicaid Insurance (by person)',
+'Medicare Insurance (by person)',
+'Uninsured or Selfpay (by person)',
+'Other Insurance (by person)',
+'Partnered Marital Status (by person)',
+'Single Marital Status (by person)',
+'Unknown Marital Status (by person)',
+'Prostate Cancer (by person)',
+'Breast Cancer (by person)',
+'Lung Cancer (by person)',
+'Sarcoma and Soft Tissue Cancers (by person)',
+'Hematologic Cancer (by person)',
+'Other Cancers (by person)'
+])
+print(df_table)
