@@ -1,0 +1,894 @@
+#Copyright (C) UCSF/Jie Jane Chen/Julian Hong 2025
+#GNU General Public License v2.0
+#Please see LICENSE and README.md
+
+#Connect to CDW
+CDW_PATH = 's3://bchsi-spark02/data/parquet/DEID_CDW/'
+MY_PATH = 's3://bchsi-spark02/home/chenjj/'
+from pyspark.sql.functions import upper, col, countDistinct
+
+#Filtering patients with bone metastases
+diag_events = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'diagnosiseventfact/')
+diag_events.registerTempTable("diag_events")
+
+diag_term_dim = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'diagnosisterminologydim/')
+diag_term_dim.registerTempTable("diag_term_dim")
+
+query_diagnosiskeys = """
+    select distinct diagnosiskey
+    from diag_term_dim where value like 'C79.51' or 
+    value like '198.5'
+    """
+
+diagnosiskeys = spark.sql(query_diagnosiskeys)
+diagnosiskeys.registerTempTable("diagnosiskeys")
+
+query_bonemetsptspost2013 = """
+    select diagnosiskey, encounterkey, startdatekey, patientdurablekey
+    from diag_events as events 
+    where events.diagnosiskey in (select diagnosiskeys.diagnosiskey from diagnosiskeys) and
+    events.startdatekey >= 20130101
+    """
+
+bonemetsptspost2013 = spark.sql(query_bonemetsptspost2013)
+bonemetsptspost2013 = bonemetsptspost2013.select("*", upper(col('startdatekey')).alias('dxdate')).drop('startdatekey')
+bonemetsptspost2013 = bonemetsptspost2013.select("*", upper(col('patientdurablekey')).alias('bonemets_pt_key')).drop('patientdurablekey')
+bonemetsptspost2013.registerTempTable("bonemetsptspost2013")
+
+bonemetsptspost2013.agg(countDistinct(col("bonemets_pt_key")).alias("count")).show()
+bonemetsptspost2013.count()
+bonemetsptspost2013.columns
+
+#Diagnosis date column
+query_dx = """
+    select min(dxdate) as dxdate, 
+    bonemets_pt_key
+    from bonemetsptspost2013
+    group by bonemets_pt_key
+    """
+
+dx = spark.sql(query_dx)
+dx.registerTempTable("dx")
+
+dx.agg(countDistinct(col("bonemets_pt_key")).alias("count")).show()
+dx.columns
+dx.count()
+
+#RT encounters filtered by CPT codes and bone mets diagnosis
+encounter = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'encounterfact/')
+encounter.registerTempTable("encounter")
+
+query_RT = """
+    select encounterkey, patientdurablekey, primaryprocedurecptcode, datekey, primarydiagnosiskey
+    from encounter
+    where (primaryprocedurecptcode in 
+    (77295, 77418, 77520, 77321, 77332, 77333, 77334, 77370, 77263, 77280, 77290, 77300, 77412, 77413, 77414, 77416, 77417, 77421, 77424, 77425, 77427, 77522, 77523, 77525, 77373, 77435))
+    AND (primarydiagnosiskey in (select diagnosiskey from bonemetsptspost2013))
+    AND datekey >= 20130101
+    """
+
+RT = spark.sql(query_RT)
+RT = RT.select("*", upper(col('encounterkey')).alias('rt_bm_enckey')).drop('encounterkey')
+RT = RT.select("*", upper(col('datekey')).alias('RTdate')).drop('datekey')
+RT = RT.drop('primarydiagnosiskey').drop('primaryprocedurecptcode')
+RT.registerTempTable("RT")
+
+RT.agg(countDistinct(col("patientdurablekey")).alias("count")).show()
+RT.columns
+RT.count()
+
+#Adding the bone mets diagnosis date
+RTpts = """
+    select dx.*, RT.*
+    from dx
+    join RT
+    on dx.bonemets_pt_key == RT.patientdurablekey
+    """
+
+RTpts = spark.sql(RTpts)
+RTpts = RTpts.drop('patientdurablekey')
+RTpts.registerTempTable("RTpts")
+
+RT_pts = """
+    select * from RTpts
+    where RTdate >= dxdate
+    """
+
+RT_pts = spark.sql(RT_pts)
+RT_pts.registerTempTable("RT_pts")
+
+RT_pts.agg(countDistinct(col("bonemets_pt_key")).alias("count")).show()
+RT_pts.columns
+RT_pts.count()
+
+#Grouping RT encounters into RT courses (defined as >14 days between RT encounters)
+query_course = """
+    select count(rt_bm_enckey) as num_fx, 
+    bonemets_pt_key
+    from RT_pts
+    group by bonemets_pt_key
+    """
+
+course = spark.sql(query_course)
+course = course.select("*", upper(col('bonemets_pt_key')).alias('ptkey')).drop('bonemets_pt_key')
+course.registerTempTable("course")
+
+course_ord = """
+    select course.*, RT_pts.dxdate, RT_pts.bonemets_pt_key, RT_pts.rt_bm_enckey, RT_pts.RTdate
+    from RT_pts
+    join course on course.ptkey == RT_pts.bonemets_pt_key
+    order by ptkey, RTdate
+    """
+
+course_ord = spark.sql(course_ord)
+course_ord = course_ord.drop('bonemets_pt_key')
+course_ord.registerTempTable("course_ord")
+
+course_ord.columns
+course_ord.count()
+course_ord.agg(countDistinct(col("ptkey")).alias("count")).show()
+course_ord.show()
+
+import pandas as pd
+spark.conf.set("spark.sql.execution.arrow.enabled", "true")
+
+pandasDF = course_ord.toPandas()
+
+courses = []
+curr_ID = ""
+
+from datetime import datetime
+
+for i in range(0,pandasDF.shape[0]):
+    
+    if pandasDF['ptkey'].iloc[i] == curr_ID: # for the same patient
+        next_date = pandasDF['RTdate'].iloc[i]
+        if (datetime.strptime(next_date, '%Y%m%d') - datetime.strptime(curr_date, '%Y%m%d')).days <= 14:
+            courses.append(course_num) # part of the same course 
+        else:
+            course_num += 1
+            courses.append(course_num)
+        curr_date = next_date
+    else:
+        curr_ID = pandasDF['ptkey'].iloc[i] # the first treatment for a given patient will always be course 1
+        course_num = 1
+        curr_date = pandasDF['RTdate'].iloc[i]
+        courses.append(course_num)
+
+finalDF = pd.DataFrame({'ptkey':pandasDF['ptkey'], 'dxdate':pandasDF['dxdate'], 'RTdate':pandasDF['RTdate'], 'RTcourse':courses, 'num_fx':pandasDF['num_fx'], 'rt_bm_enckey':pandasDF['rt_bm_enckey']})
+
+len(courses)
+finalDF
+
+RTcourses = spark.createDataFrame(finalDF)
+RTcourses.registerTempTable("RTcourses")
+RTcourses.show()
+RTcourses.count()
+
+RTstart = """
+    select ptkey, RTcourse, min(dxdate) as dxdate, min(RTdate) as RTstart, max(RTdate) as RTend
+    from RTcourses
+    group by ptkey, RTcourse
+    order by ptkey, RTcourse, dxdate, RTstart, RTend
+    """
+
+RTstart = spark.sql(RTstart)
+RTstart = RTstart.select("*", upper(col('ptkey')).alias('patientkey')).drop('ptkey')
+RTstart.registerTempTable("RTstart")
+
+RTstart.show()
+RTstart.count()
+
+RTenc = """
+    select RTstart.patientkey, RTstart.RTcourse, RTstart.dxdate, RTstart.RTstart, RTstart.RTend, RTcourses.ptkey, RTcourses.rt_bm_enckey, RTcourses.RTdate
+    from RTcourses
+    inner join RTstart
+    where RTcourses.ptkey == RTstart.patientkey
+    AND RTcourses.RTdate ==  RTstart.RTstart
+    """
+
+RTenc = spark.sql(RTenc)
+RTenc = RTenc.drop('ptkey').drop('RTdate')
+RTenc.registerTempTable("RTenc")
+
+RTenc.show()
+RTenc.count()
+RTenc.agg(countDistinct(col("patientkey")).alias("count")).show()
+
+#Cancer Groupings
+#Query diagnosis start dates within 6 months of bone mets diagnosis date
+#Working in python
+
+from pyspark.sql.functions import upper, col, countDistinct
+from pyspark.sql import SparkSession
+from pyspark import SparkConf, SparkContext, SQLContext
+from pyspark.sql.functions import upper, col, countDistinct
+import numpy as np
+import pandas as pd
+
+import sys
+import os
+os.environ['PYSPARK_PYTHON'] = sys.executable
+os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
+
+RT_df = """
+    select patientkey, dxdate
+    from RTenc
+    """
+
+RT_df = spark.sql(RT_df)
+RT_df = RT_df.select("*", upper(col('patientkey')).alias('ptkey')).drop('patientkey')
+RT_df.registerTempTable("RT_df")
+
+import pandas as pd
+spark.conf.set("spark.sql.execution.arrow.enabled", "true")
+
+RT_df_pandas = RT_df.toPandas()
+from datetime import datetime
+
+#Convert time into datetime format to get date diff
+RT_df_pandas['dxdate'] = RT_df_pandas['dxdate'].apply(lambda x: pd.to_datetime(str(x), format='%Y%m%d'))
+RT_df_pandas
+RT_df_pandas['ptkey'].nunique()
+
+#Convert pandas dataframe into a spark dataframe so it can be registered as a table
+RT_df_pandas = spark.createDataFrame(RT_df_pandas) 
+RT_df_pandas.registerTempTable("RT_df_pandas")
+
+cancer_pats_query = """SELECT RT_df_pandas.*, startdatekeyvalue, DATEDIFF(dxdate, startdatekeyvalue) as diagDateDiff, diagnosiskey
+    FROM RT_df_pandas
+    JOIN diag_events
+    ON ptkey == patientdurablekey
+    ORDER BY ptkey, startdatekeyvalue DESC
+    """
+cancer_pats = spark.sql(cancer_pats_query)
+cancer_pats.registerTempTable("cancer_pats")
+cancer_pats.show()
+cancer_pats.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+cancer_pats_filtered = cancer_pats.where(col("diagDateDiff") > 0).drop('diagDateDiff').drop_duplicates()
+cancer_pats_filtered.registerTempTable("cancer_pats_filtered")
+cancer_pats_filtered.show()
+cancer_pats_filtered.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Filter for cancer diagnosis dates
+cancer_pats_query = """SELECT pats.*, value 
+    FROM cancer_pats_filtered as pats
+    JOIN diag_term_dim as terms
+    ON pats.diagnosiskey == terms.diagnosiskey
+    WHERE type like 'ICD-10-CM' and value like "C%"
+    ORDER BY ptkey
+    """
+cancer_diagnoses = spark.sql(cancer_pats_query).drop("diagnosiskey").drop("startdatekeyvalue").drop_duplicates()
+cancer_diagnoses.registerTempTable("cancer_diagnoses")
+
+#Convert table to pandas dataframe 
+cancer_diagnoses_df = cancer_diagnoses.toPandas()
+cancer_diagnoses_df
+cancer_diagnoses_df['ptkey'].nunique()
+
+def returncancercategory(icd):#ICD10
+    #Breast, CNS, Colorectal, Head and neck, Hematological, Kidney, Liver and bile duct, Lung, Melanoma, Skin other, Metastatic, Pancreas, Prostate, Bone connective and soft tissue, Other
+    try:
+        icd_num=int(icd[1:3])
+    except:
+        return "Other"
+    icd_num=int(icd[1:3])
+    if icd_num<=14 or (icd_num>=30 and icd_num<34):
+        #Pull in nasal, larynx, tracheal cancers
+        return 'Head and neck'
+    elif icd_num>=69 and icd_num<73:
+        return 'CNS'
+    elif icd_num>=18 and icd_num<22:
+        #Exclude anal cancers
+        return 'Colorectal'
+    elif (icd_num>=15 and icd_num<18) or (icd_num>=21 and icd_num<22) or (icd_num>=26 and icd_num<27):
+        #Other GI including anal
+        return 'GI other'
+    elif icd_num>=22 and icd_num<25:
+        #Including gallbladder
+        return 'Liver and bile duct'
+    elif icd_num>=25 and icd_num<26:
+        return 'Pancreatic'
+    elif icd_num>=34 and icd_num<35:
+        #Exclude mesothelioma
+        return 'Lung'
+    elif (icd_num>=40 and icd_num<42) or (icd_num>=46 and icd_num<50):
+        #Exclude mesothelioma
+        return 'Bone soft tissue and sarcoma'
+    elif icd_num>=43 and icd_num<44:
+        return 'Melanoma'
+    elif icd_num>=44 and icd_num<45:
+        #Squame, basal, other
+        return 'Skin other'
+    elif icd_num>=50 and icd_num<51:
+        return 'Breast'
+    elif icd_num>=51 and icd_num<59:
+        return 'Gynecologic'
+    elif icd_num>=61 and icd_num<62:
+        return 'Prostate'
+    elif icd_num>=64 and icd_num<66:
+        return 'Kidney and renal pelvis'
+    elif icd_num>=66 and icd_num<69:
+        return 'Bladder and ureter'
+    elif icd_num>=81 and icd_num<97:
+        return 'Hematologic'
+    elif icd_num>=77 and icd_num<80:
+        return 'Metastatic'
+    else:
+        return 'Other'
+
+def returncancerchapter(icd):
+    try:
+        icd_num=int(icd[1:3])
+    except:
+        if icd[1:3] == '7A':
+            return "Malignant neuroendocrine tumors"
+        elif icd[1:3] == '7B':
+            return "Secondary neuroendocrine tumors"
+        elif icd[1:3] == '4A':
+            return "Merkel cell carcinoma"
+    icd_num=int(icd[1:3])
+    if icd_num<=14:
+        return "Malignant neoplasms, lip, oral cavity and pharynx"
+    elif icd_num>14 and icd_num<=26:
+        return "Malignant neoplasms, digestive organs"
+    elif icd_num>=30 and icd_num<=39:
+        return "Malignant neoplasms, respiratory system and intrathoracic organs"
+    elif icd_num>=40 and icd_num<=41:
+        return "Malignant neoplasms, bone and articular cartilage"
+    elif icd_num>=43 and icd_num<=44:
+        return "Malignant neoplasms, skin"
+    elif icd_num>=45 and icd_num<=49:
+        return "Malignant neoplasms, connective and soft tissue"
+    elif icd_num>=50 and icd_num<=58:
+        return "Malignant neoplasms, breast and female genital organs"
+    elif icd_num>=60 and icd_num<=63:
+        return "Malignant neoplasms of male genital organs"
+    elif icd_num>=64 and icd_num<=68:
+        return "Malignant neoplasms, urinary organs"
+    elif icd_num>=69 and icd_num<=72:
+        return "Malignant neoplasms, eye, brain and central nervous system"
+    elif icd_num>=73 and icd_num<=75:
+        return "Malignant neoplasms, endocrine glands and related structures"
+    elif icd_num>=76 and icd_num<=80:
+        return "Malignant neoplasms, secondary and ill-defined"
+    elif icd_num>=81 and icd_num<=96:
+        return "Malignant neoplasms, stated or presumed to be primary, of lymphoid, haematopoietic and related tissue"
+    elif icd_num==97:
+        return "Malignant neoplasms of independent (primary) multiple sites"
+
+#Convert to 3-digit ICD10 codes
+cancer_diagnoses_df['value'] = [cancer_diagnoses_df['value'][i][:3] for i in range(len(cancer_diagnoses_df))]
+
+
+cancer_diagnoses_df = cancer_diagnoses_df.drop_duplicates().reset_index(drop=True)
+cancer_diagnoses_df['category'] = [returncancercategory(cancer_diagnoses_df['value'][i]) for i in range(len(cancer_diagnoses_df))]
+cancer_diagnoses_df['chapter'] = [returncancerchapter(cancer_diagnoses_df['value'][i]) for i in range(len(cancer_diagnoses_df))]
+cancer_diagnoses_df
+cancer_diagnoses_df['ptkey'].nunique()
+
+non_mets_diagnoses_df = cancer_diagnoses_df[~(cancer_diagnoses_df['category']=='Metastatic')].reset_index(drop=True)
+non_mets_diagnoses_df
+non_mets_diagnoses_df['ptkey'].nunique()
+
+#One-hot-encoding of value, chapter, or category for cancer diagnoses
+#Re-register table as a spark dataframe to query
+cancer_diagnoses = spark.createDataFrame(cancer_diagnoses_df)
+cancer_diagnoses.registerTempTable("cancer_diagnoses")
+
+import pyspark.sql.functions as F
+
+query_values = """ SELECT DISTINCT ptkey, category 
+    FROM cancer_diagnoses"""
+category_one_hot_encoded = spark.sql(query_values).groupBy("ptkey").pivot("category").agg(F.lit(1)).fillna(0)
+category_one_hot_encoded.registerTempTable("category_one_hot_encoded")
+
+category_one_hot_encoded.show()
+
+#Save output
+category_one_hot_encoded.write.save(MY_PATH + 'Cancer_Diagnoses.csv', format = 'csv', header = True)
+cancer_diagnoses.write.save(MY_PATH + 'Cancer_Diagnoses_descriptive.csv', format = 'csv', header = True)
+
+#Join cancer groupings with RTenc table
+RT = """
+    select RTenc.*, category_one_hot_encoded.*
+    from RTenc
+    join category_one_hot_encoded
+    where RTenc.patientkey == category_one_hot_encoded.ptkey
+    """
+
+RT = spark.sql(RT)
+RT = RT.select("*").drop('ptkey')
+RT.registerTempTable("RT")
+RT.show()
+RT.agg(countDistinct(col("patientkey")).alias("count")).show()
+
+#Obtaining symptoms data
+#Symptoms within 30 days preceding RT
+note_metadata = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'note_metadata/')
+note_metadata.registerTempTable("note_metadata")
+
+note_concepts = spark.read.options(header='true', interschema='true').parquet(CDW_PATH + 'note_concepts/')
+note_concepts.registerTempTable("note_concepts")
+
+meta = """
+    select distinct patientdurablekey, deid_note_key, encounterkey as sx_enc_key, deid_service_date as sx_date,
+    RT.patientkey, RT.RTcourse, RT.RTstart, RT.dxdate
+    from note_metadata
+    join RT
+    on note_metadata.patientdurablekey = RT.patientkey
+    """
+
+meta = spark.sql(meta)
+meta = meta.select("*", upper(col('deid_note_key')).alias('notekey')).drop('deid_note_key')
+meta = meta.select("*", upper(col('patientdurablekey')).alias('ptkey')).drop('patientdurablekey'). drop('patientkey')
+meta.registerTempTable("meta")
+
+meta.agg(countDistinct(col("ptkey")).alias("count")).show()
+meta.show()
+meta.count()
+
+#Convert to python for formatting dates
+
+import pandas as pd
+spark.conf.set("spark.sql.execution.arrow.enabled", "true")
+
+df = meta.toPandas()
+
+from datetime import datetime
+
+df['sx_date'] = pd.to_datetime(df['sx_date'])
+df['RTstart'] = pd.to_datetime(df['RTstart'])
+df['dxdate'] = pd.to_datetime(df['dxdate'])
+
+df['sx_date'] = df['sx_date'].dt.strftime('%Y%m%d')
+df['RTstart'] = df['RTstart'].dt.strftime('%Y%m%d')
+df['dxdate'] = df['dxdate'].dt.strftime('%Y%m%d')
+
+print(df)
+
+df[['RTstart','sx_date', 'dxdate']] = df[['RTstart','sx_date', 'dxdate']].apply(pd.to_datetime) 
+df['diff_days_sxRT'] = (df['RTstart'] - df['sx_date']).dt.days
+
+#Displays rows where diff_days_sxRT between 0-30 days before RT
+df = df[(df['diff_days_sxRT']>=0 ) & (df['diff_days_sxRT']<=30)]
+
+print(df)
+
+sxRTdf = pd.DataFrame({'ptkey':df['ptkey'], 'RTcourse':df['RTcourse'], 'dxdate':df['dxdate'], 'RTstart':df['RTstart'], 'sx_date':df['sx_date'], 'diff_days_sxRT':df['diff_days_sxRT'], 'sx_enc_key':df['sx_enc_key'], 'notekey':df['notekey']})
+
+
+Symptoms_RT_meta = spark.createDataFrame(sxRTdf)
+Symptoms_RT_meta.registerTempTable("Symptoms_RT_meta")
+
+Symptoms_RT_meta.show()
+Symptoms_RT_meta.count()
+
+#Symptoms within 30 days preceding bone metastasis diagnosis date
+df = meta.toPandas()
+
+from datetime import datetime
+
+df['sx_date'] = pd.to_datetime(df['sx_date'])
+df['RTstart'] = pd.to_datetime(df['RTstart'])
+df['dxdate'] = pd.to_datetime(df['dxdate'])
+
+df['sx_date'] = df['sx_date'].dt.strftime('%Y%m%d')
+df['RTstart'] = df['RTstart'].dt.strftime('%Y%m%d')
+df['dxdate'] = df['dxdate'].dt.strftime('%Y%m%d')
+
+print(df)
+
+df[['dxdate','sx_date']] = df[['dxdate','sx_date']].apply(pd.to_datetime) 
+df['diff_days_sxdx'] = (df['dxdate'] - df['sx_date']).dt.days
+
+#Displays rows where diff_days_sxRT between 0-30 days before RT
+df = df[(df['diff_days_sxdx']>=0 ) & (df['diff_days_sxdx']<=30)]
+
+print(df)
+
+sxdxdf = pd.DataFrame({'ptkey':df['ptkey'], 'dxdate':df['dxdate'], 'sx_date':df['sx_date'], 'diff_days_sxdx':df['diff_days_sxdx'], 'sx_enc_key':df['sx_enc_key'], 'notekey':df['notekey']})
+
+Symptoms_dx_meta = spark.createDataFrame(sxdxdf)
+Symptoms_dx_meta.registerTempTable("Symptoms_dx_meta")
+
+Symptoms_dx_meta.show()
+Symptoms_dx_meta.count()
+
+#Joining Meta Data with Concepts
+#Symptoms in 30 days preceding RT
+
+concepts_RT = """
+    select *
+    from note_concepts
+    inner join Symptoms_RT_meta
+    on Symptoms_RT_meta.notekey == note_concepts.deid_note_key
+    """
+
+concepts_RT = spark.sql(concepts_RT)
+concepts_RT = concepts_RT.drop('deid_note_key').drop('patientdurablekey').drop('offset_start').drop('offset_end')
+concepts_RT.registerTempTable("concepts_RT")
+
+concepts_RT.agg(countDistinct(col("ptkey")).alias("count")).show()
+concepts_RT.count()
+
+Symptoms_RT = """
+    select *
+    from concepts_RT
+    where domain like 'signs and symptoms'
+    """
+
+Symptoms_RT = spark.sql(Symptoms_RT)
+Symptoms_RT.registerTempTable("Symptoms_RT")
+
+Symptoms_RT.agg(countDistinct(col("vocab_term_id")).alias("count")).show()
+Symptoms_RT.agg(countDistinct(col("notekey")).alias("count")).show()
+Symptoms_RT.agg(countDistinct(col("ptkey")).alias("count")).show()
+Symptoms_RT.count()
+
+#Demographics
+pt_demo = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'patdurabledim')
+pt_demo.registerTempTable("pt_demo")
+
+Demo = """
+    select distinct patientdurablekey, sex, preferredlanguage, ethnicity, firstrace, secondrace, multiracial, 
+    birthdate, deathdate, status, maritalstatus, religion, smokingstatus, highestlevelofeducation
+    from pt_demo 
+    where patientdurablekey in (select patientkey from RT)
+    """
+
+Demo = spark.sql(Demo)
+Demo = Demo.select("*", upper(col('patientdurablekey')).alias('ptkey')).drop('patientdurablekey')
+Demo.registerTempTable("Demo")
+Demo.count()
+Demo.show()
+Demo.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Restricting to only if the patient has notes before both dx of bone metastases and RT for bone metastases
+Symptoms_dxRT_RT = """
+    select * from Symptoms_RT
+    where Symptoms_RT.ptkey in (select Demo_dxRT.ptkey from Demo_dxRT)
+    """
+
+Symptoms_dxRT_RT = spark.sql(Symptoms_dxRT_RT)
+Symptoms_dxRT_RT.registerTempTable("Symptoms_dxRT_RT")
+
+Symptoms_dxRT_RT.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Symptoms in 30 days preceding bone metastases diagnosis date
+concepts_dx = """
+    select *
+    from note_concepts
+    inner join Symptoms_dx_meta
+    on Symptoms_dx_meta.notekey == note_concepts.deid_note_key
+    """
+
+concepts_dx = spark.sql(concepts_dx)
+concepts_dx = concepts_dx.drop('deid_note_key').drop('patientdurablekey').drop('offset_start').drop('offset_end')
+concepts_dx.registerTempTable("concepts_dx")
+
+concepts_dx.agg(countDistinct(col("ptkey")).alias("count")).show()
+concepts_dx.count()
+
+Symptoms_dx = """
+    select *
+    from concepts_dx
+    where domain like 'signs and symptoms'
+    """
+
+Symptoms_dx = spark.sql(Symptoms_dx)
+Symptoms_dx.registerTempTable("Symptoms_dx")
+
+Symptoms_dx.agg(countDistinct(col("vocab_term_id")).alias("count")).show()
+Symptoms_dx.agg(countDistinct(col("notekey")).alias("count")).show()
+
+Symptoms_dx.count()
+Symptoms_dx.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Restricting to only if the pt has notes before both dx and RT
+
+Symptoms_dxRT_dx = """
+    select * from Symptoms_dx
+    where Symptoms_dx.ptkey in (select Demo_dxRT.ptkey from Demo_dxRT)
+    """
+
+Symptoms_dxRT_dx = spark.sql(Symptoms_dxRT_dx)
+Symptoms_dxRT_dx.registerTempTable("Symptoms_dxRT_dx")
+
+Symptoms_dxRT_dx.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Combining Demo table with Symptoms_dx and Symptoms_RT to compare stable size of patients over time
+#Only including patients who have symptoms notes before RT
+Demo_RT = """
+    select * from Demo
+    where demo.ptkey in (select Symptoms_RT.ptkey from Symptoms_RT)
+    """
+
+Demo_RT = spark.sql(Demo_RT)
+Demo_RT.registerTempTable("Demo_RT")
+
+Demo_RT.agg(countDistinct(col("ptkey")).alias("count")).show()
+Demo_RT.show()
+
+#Only including patients who have symptoms notes before diagnosis of bone mets and RT
+Demo_dxRT = """
+    select * from Demo_RT
+    where demo_RT.ptkey in (select Symptoms_dx.ptkey from Symptoms_dx)
+    """
+
+Demo_dxRT = spark.sql(Demo_dxRT)
+Demo_dxRT.registerTempTable("Demo_dxRT")
+Demo_dxRT.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Combining RT + Demo_dxRT tables
+RTDemo_dxRT = """
+    select * from RT
+    join Demo_dxRT
+    on Demo_dxRT.ptkey = RT.patientkey
+    """
+
+RTDemo_dxRT = spark.sql(RTDemo_dxRT)
+RTDemo_dxRT = RTDemo_dxRT.drop('patientkey')
+RTDemo_dxRT.registerTempTable("RTDemo_dxRT")
+
+RTDemo_dxRT.count()
+
+#Redundant code in this section - I wrote this to check my work
+RTDemo = """
+    select * from RT
+    join Demo
+    on Demo.ptkey = RT.patientkey
+    """
+
+RTDemo = spark.sql(RTDemo)
+RTDemo = RTDemo.drop('patientkey')
+RTDemo.registerTempTable("RTDemo")
+
+RTDemo_dx = """
+    select * from RTDemo
+    where rtdemo.ptkey in (select Symptoms_dx.ptkey from Symptoms_dx)
+    """
+
+RTDemo_dx = spark.sql(RTDemo_dx)
+RTDemo_dx.registerTempTable("RTDemo_dx")
+
+RTDemo_dx.count()
+
+RTDemo_dxRT = """
+    select * from RTDemo_dx
+    where rtdemo_dx.ptkey in (select Symptoms_RT.ptkey from Symptoms_RT)
+    """
+
+RTDemo_dxRT = spark.sql(RTDemo_dxRT)
+RTDemo_dxRT.registerTempTable("RTDemo_dxRT")
+
+RTDemo_dxRT.count()
+RTDemo_dxRT.show()
+
+#Extract Note Dates for R Script
+query_epic_ids = """
+        SELECT ptkey, dxdate, patientepicid
+        FROM RTDemo
+        JOIN patdurabledim
+        on ptkey = patientdurablekey 
+        WHERE patdurabledim.IsCurrent = 1
+        """
+epic_IDs = spark.sql(query_epic_ids)
+epic_IDs.registerTempTable("epic_IDs")
+
+query_date_shifts = """
+        WITH shifts AS 
+        (
+            SELECT patdurabledim.PatientEpicId
+                   -- first_date - encounters.DateKeyValue
+                 , DATEDIFF(DAY, encounters.DateKeyValue, first_notes.first_date) AS dshift
+                 , RANK() OVER (PARTITION BY patdurabledim.PatientEpicId ORDER BY COUNT(*) DESC) As Rank
+             FROM encounters
+             JOIN (  SELECT note_metadata.EncounterKey
+                          , MIN(note_metadata.deid_service_date) AS first_date
+                       FROM note_metadata
+                      WHERE note_metadata.EncounterKey NOT IN ('-1', '-2', '-3')
+                   GROUP BY note_metadata.EncounterKey
+                  ) first_notes
+               ON first_notes.EncounterKey = encounters.EncounterKey
+             JOIN patdurabledim
+               ON patdurabledim.PatientDurableKey = encounters.PatientDurableKey
+         GROUP BY patdurabledim.PatientEpicId
+                , DATEDIFF(DAY, encounters.DateKeyValue, first_notes.first_date)
+        )
+        SELECT PatientEpicId
+             , dshift
+          FROM shifts
+         WHERE Rank = 1
+         """
+date_shifts = spark.sql(query_date_shifts)
+date_shifts.registerTempTable("date_shifts")
+
+query_pat_and_shifts = """
+        SELECT ids.*, dshift
+        FROM epic_IDs as ids
+        JOIN date_shifts
+        on ids.patientepicid = date_shifts.patientepicid
+        """
+pats_and_shifts = spark.sql(query_pat_and_shifts)
+pats_and_shifts.registerTempTable("pats_and_shifts")
+
+query_note_dates = """
+        SELECT ptkey, meta.patientdurablekey as metadurablekey, meta.patientepicid,
+        dxdate, deid_note_key, dshift, DATEADD(day,dshift, deid_service_date) as shifted_note_date, deid_service_date
+        from note_metadata as meta
+        join pats_and_shifts
+        on meta.patientepicid = pats_and_shifts.patientepicid
+        order by ptkey, deid_service_date 
+        """
+note_dates = spark.sql(query_note_dates)
+note_dates.registerTempTable("note_dates")
+
+note_dates.show()
+
+note_dates = note_dates.drop(col("shifted_note_date"))
+note_dates = note_dates.select("*", upper(col('deid_service_date')).alias('note_date')).drop('deid_service_date')
+note_dates.registerTempTable("note_dates")
+
+note_dates.show(50)
+note_dates.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Save output
+note_dates.write.save(MY_PATH + 'Note_Dates.csv', format = 'csv', header = True)
+
+#Obtaining insurance data
+#Registering tables
+billing = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'billingaccountfact/')
+billing.registerTempTable("billing")
+
+patientdim = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'patientdim/')
+patientdim.registerTempTable("patientdim")
+
+encounters = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'encounterfact/')
+encounters.registerTempTable("encounters")
+
+patdurabledim = spark.read.options(header='true', inferschema='true').parquet(CDW_PATH + 'patdurabledim/')
+patdurabledim.registerTempTable("patdurabledim")
+
+#Extract active insurance based on encounter datekeyvalue
+#Extract insurance info
+query_insurance = """ 
+        SELECT distinct ptkey, dxdate, financialclass as insurance, encounterkey
+        FROM billing
+        join RTDemo
+        on billing.patientdurablekey = ptkey 
+        """
+coverage_info = spark.sql(query_insurance)
+coverage_info.registerTempTable("coverage_info")
+
+#Convert table to pandas dataframe 
+coverage_info_df = coverage_info.toPandas()
+
+#Convert unformatted date into datetime format
+coverage_info_df['dxdate'] = coverage_info_df['dxdate'].apply(lambda x: pd.to_datetime(str(x), format='%Y%m%d'))
+print(coverage_info_df)
+
+#Re-register table as a spark dataframe to query
+coverage_info = spark.createDataFrame(coverage_info_df)
+coverage_info.registerTempTable("coverage_info")
+
+query_dxencounter = """
+        select coverage_info.*, datekeyvalue, DATEDIFF(dxdate, datekeyvalue) as date_diff
+        from coverage_info
+        join encounters
+        on coverage_info.encounterkey = encounters.encounterkey
+        order by ptkey, datekeyvalue
+        """ 
+dx_encounter = spark.sql(query_dxencounter)
+dx_encounter.registerTempTable("dx_encounter")
+
+dx_encounter.agg(countDistinct(col("ptkey")).alias("count")).show()
+dx_encounter.show()
+
+query_dxencounter_days = """
+        select ptkey, first(dxdate) as dxdate, insurance, MAX(date_diff) as days_before, MIN(date_diff) as days_after 
+        from dx_encounter
+        group by ptkey, insurance 
+        order by ptkey, days_before
+        """ 
+dx_encounter_days = spark.sql(query_dxencounter_days)
+dx_encounter_days.registerTempTable("dx_encounter_days")
+dx_encounter_days.show()
+
+active_insurance = dx_encounter_days.where(col("days_before") >= 0).where(col("days_after") <= 0)
+active_insurance.show()
+
+private_insurance = ["Aetna",
+"Blue Cross",
+"Blue Shield",
+"Capitation",
+"Cigna",
+"Commercial",
+"Covered California",
+"HealthNet",
+"Institutional",
+"Kaiser",
+"United Health Care",
+"Capitation Senior"]
+
+other_insurance = ['Other Government','Other']
+
+uninsured_or_self_pay = ['Charity','Self-Pay']
+
+medicare = ['Medicare',
+"Medicare Advantage",
+'Medicare Advantage HMO/Senior']
+
+medicaid = ["Alameda Alliance Covered California Managed Medi-Cal",'Alameda Alliance Managed Medi-Cal',
+"Covered California Medi-Cal",
+"MEDICAID/MIA/CMSP",
+"Medi-Cal Managed Care",
+"Medi-Cal Standard",
+"Partnership Covered California Managed Medi-Cal", 'CCS/GHPP', 
+"Partnership Managed Medi-Cal", "Medi-Cal Pending"]
+
+unspecified = ['*Unspecified']
+
+research_workerscomp = ['Research', 'Workers Comp']
+
+active_insurance.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+from pyspark.sql.functions import when
+
+active_insurance.withColumn("InsuranceGroup", when((col("insurance").isin(private_insurance)), 'Private').\
+                            when((col("insurance").isin(other_insurance)),"Other").\
+                            when((col("insurance").isin(research_workerscomp)),"Research/WorkersComp").\
+                            when((col("insurance").isin(uninsured_or_self_pay)), 'Uninsured/Self-Pay').\
+                            when((col("insurance").isin(unspecified)), 'Unspecified').\
+                            when((col("insurance").isin(medicare)), 'Medicare').\
+                            when((col("insurance").isin(medicaid)), 'Medicaid'))
+
+active_insurance = active_insurance.withColumn("InsuranceGroup", when((col("insurance").isin(private_insurance)), 'Private').\
+                            when((col("insurance").isin(other_insurance)),"Other").\
+                            when((col("insurance").isin(research_workerscomp)),"Research/WorkersComp").\
+                            when((col("insurance").isin(uninsured_or_self_pay)), 'Uninsured/Self-Pay').\
+                            when((col("insurance").isin(unspecified)), 'Unspecified').\
+                            when((col("insurance").isin(medicare)), 'Medicare').\
+                            when((col("insurance").isin(medicaid)), 'Medicaid'))
+active_insurance.registerTempTable("active_insurance")
+
+active_insurance.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Modify the dataframe to consolidate insurance types / drop duplicates 
+active_insurance_df = active_insurance.toPandas()
+
+RTDemo_df = RTDemo.toPandas()
+set(RTDemo_df['ptkey']) - set(active_insurance_df['ptkey'])
+
+active_insurance_df = active_insurance_df.drop_duplicates().sort_values(by=['ptkey']).reset_index(drop=True)
+
+#Each row is a unique patient 
+active_insurance_df['ptkey'].nunique()
+
+#Types of insurance
+set(active_insurance_df['insurance'])
+
+active_insurance_df = active_insurance_df.select("*", upper(col('ptkey')).alias('patientkey')).drop('ptkey')
+active_insurance_df.registerTempTable("active_insurance_df")
+
+#Joining active insurance data with RTDemo_dxRT
+Insurance = """
+    select RTDemo_dxRT.*, active_insurance_df.patientkey, active_insurance_df.insurance 
+    from RTDemo_dxRT
+    join active_insurance_df
+    where active_insurance_df.patientkey == RTDemo_dxRT.ptkey
+    """
+
+All_RTDemo_dxRT = spark.sql(Insurance)
+All_RTDemo_dxRT = All_RTDemo_dxRT.select("*").drop('patientkey')
+All_RTDemo_dxRT.registerTempTable("All_RTDemo_dxRT")
+All_RTDemo_dxRT.show()
+All_RTDemo_dxRT.agg(countDistinct(col("ptkey")).alias("count")).show()
+
+#Downloading the data
+All_RTDemo_dxRT.write.save(MY_PATH + 'All_RTDemo_dxRT.csv', format = 'csv', header = True)
+Symptoms_dxRT_RT.write.save(MY_PATH + 'Symptoms_dxRT_RT_8.9.23.csv', format = 'csv', header = True)
+Symptoms_dxRT_dx.write.save(MY_PATH + 'Symptoms_dxRT_dx_8.9.23.csv', format = 'csv', header = True)
+
+
