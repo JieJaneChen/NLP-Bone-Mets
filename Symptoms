@@ -1,0 +1,240 @@
+#Copyright (C) UCSF/Jie Jane Chen/Julian Hong 2025
+#GNU General Public License v2.0
+#Please see LICENSE and README.md
+
+#Percentages for symptoms before dx
+557/1061
+221/1061
+136/1061
+127/1061
+126/1061
+69/1061
+106/1061
+116/1061
+112/1061
+68/1061
+
+#Percentages for symptoms before 1st palliative RT
+972/1061
+519/1061
+363/1061
+362/1061
+338/1061
+298/1061
+293/1061
+257/1061
+250/1061
+195/1061
+
+#Percentages for symptoms before 2nd and subsequent palliative RT courses
+346/374
+212/374
+163/374
+135/374
+158/374
+150/374
+130/374
+106/374
+114/374
+68/374
+
+#Fisher's exact test for symptoms before dx, 1st RT, or 2nd+ RT
+#Pain
+1061-557
+1061-972
+374-346
+
+df <- data.frame(
+  beforedx = c(557,504), 
+  before1stRT = c(972,89), 
+  before2ndRT = c(374,28), 
+  row.names = c('Pain present', 'No pain'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(972,89), 
+  before2ndRT = c(374,28), 
+  row.names = c('Pain present', 'No pain'))
+df
+fisher.test(df)
+
+#Nausea
+1061-221
+1061-519
+374-212
+
+df <- data.frame(
+  beforedx = c(221,840), 
+  before1stRT = c(519,542), 
+  before2ndRT = c(212,162), 
+  row.names = c('Nausea present', 'No nausea'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(519,542), 
+  before2ndRT = c(212,162), 
+  row.names = c('Nausea present', 'No nausea'))
+df
+fisher.test(df)
+
+#Constipation
+1061-136
+1061-363
+374-163
+
+df <- data.frame(
+  beforedx = c(136,925), 
+  before1stRT = c(363,698), 
+  before2ndRT = c(163,211), 
+  row.names = c('Constipation present', 'No constipation'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(363,698), 
+  before2ndRT = c(163,211), 
+  row.names = c('Constipation present', 'No constipation'))
+df
+fisher.test(df)
+
+#Weakness
+1061-127
+1061-362
+374-135
+
+df <- data.frame(
+  beforedx = c(127,934), 
+  before1stRT = c(362,699), 
+  before2ndRT = c(135,239), 
+  row.names = c('Weakness present', 'No weakness'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(362,699), 
+  before2ndRT = c(135,239), 
+  row.names = c('Weakness present', 'No weakness'))
+df
+fisher.test(df)
+
+#Fatigue
+1061-126
+1061-338
+374-158
+
+df <- data.frame(
+  beforedx = c(126,935), 
+  before1stRT = c(338,723), 
+  before2ndRT = c(158,216), 
+  row.names = c('Fatigue present', 'No fatigue'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(338,723), 
+  before2ndRT = c(158,216), 
+  row.names = c('Fatigue present', 'No fatigue'))
+df
+fisher.test(df)
+
+#Pathologic fracture
+1061-69
+1061-298
+374-150
+
+df <- data.frame(
+  beforedx = c(69,992), 
+  before1stRT = c(298,763), 
+  before2ndRT = c(150,224), 
+  row.names = c('Path fx present', 'No path fx'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(298,763), 
+  before2ndRT = c(150,224), 
+  row.names = c('Path fx present', 'No path fx'))
+df
+fisher.test(df)
+
+#Edema
+1061-106
+1061-293
+374-130
+
+df <- data.frame(
+  beforedx = c(106,955), 
+  before1stRT = c(293,768), 
+  before2ndRT = c(130,244), 
+  row.names = c('Edema present', 'No edema'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(293,768), 
+  before2ndRT = c(130,244), 
+  row.names = c('Edema present', 'No edema'))
+df
+fisher.test(df)
+
+#Headache
+1061-116
+1061-257
+374-106
+
+df <- data.frame(
+  beforedx = c(116,945), 
+  before1stRT = c(257,804), 
+  before2ndRT = c(106,268), 
+  row.names = c('Headache present', 'No headache'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(257,804), 
+  before2ndRT = c(106,268), 
+  row.names = c('Headache present', 'No headache'))
+df
+fisher.test(df)
+
+#Wheezing
+1061-112
+1061-250
+374-114
+
+df <- data.frame(
+  beforedx = c(112,949), 
+  before1stRT = c(250,811), 
+  before2ndRT = c(114,260), 
+  row.names = c('Wheezing present', 'No wheezing'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(250,811), 
+  before2ndRT = c(114,260), 
+  row.names = c('Wheezing present', 'No wheezing'))
+df
+fisher.test(df)
+
+#Dizziness
+1061-68
+1061-195
+374-68
+
+df <- data.frame(
+  beforedx = c(68,993), 
+  before1stRT = c(195,866), 
+  before2ndRT = c(68,306), 
+  row.names = c('Wheezing present', 'No wheezing'))
+df
+fisher.test(df)
+
+df <- data.frame(
+  before1stRT = c(195,866), 
+  before2ndRT = c(68,306), 
+  row.names = c('Wheezing present', 'No wheezing'))
+df
+fisher.test(df)
